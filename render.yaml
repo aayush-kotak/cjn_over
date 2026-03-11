@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: cjn-website
+    env: node
+    plan: free
+    buildCommand: npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 18
+      - key: PORT
+        value: 10000
+      - key: DATABASE_PATH
+        value: /opt/render/project/src/data/cjn.db
+    # Persistent Disk support (requires a card for some accounts, or Starter plan)
+    # If the user stays on the free tier, the database resets on restart.
+    # To enable persistence, uncomment the disk section below (Requires Render Paid tier).
+    # disks:
+    #   - name: cjn-data
+    #     mountPath: /opt/render/project/src/data
+    #     sizeGB: 1
