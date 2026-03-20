@@ -60,3 +60,4 @@ Frontend runs on http://localhost:5173 (proxied API calls to :5000)
 ---
 
 © CJN PVT LTD — Tiwana Brand Cattle Feed
+"# CJN_web_app" 
