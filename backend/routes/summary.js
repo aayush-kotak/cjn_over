@@ -1,169 +1,81 @@
 const express = require('express');
-const router = express.Router();
-const db = require('../db/database');
+const router  = express.Router();
+const db      = require('../db/database');
 
-// GET /api/today-summary — returns today's aggregated data
 router.get('/today-summary', (req, res) => {
   try {
-    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-
-    // Total Cash today
-    const cashRow = db.prepare(
-      "SELECT COALESCE(SUM(grand_total), 0) as total FROM cash_sales WHERE date(created_at) = ?"
-    ).get(today);
-
-    // Total Credit today
-    const creditRow = db.prepare(
-      "SELECT COALESCE(SUM(amount), 0) as total FROM credit_received WHERE date(created_at) = ?"
-    ).get(today);
-
-    // Total Bags from cash sales today
-    const cashBagsRows = db.prepare(
-      "SELECT bags FROM cash_sales WHERE date(created_at) = ?"
-    ).all(today);
-
-    let totalBagsCash = 0;
-    cashBagsRows.forEach(r => {
-      const bags = JSON.parse(r.bags);
-      bags.forEach(b => { totalBagsCash += Number(b.numberOfBags) || 0; });
-    });
-
-    // Total Bags from debit sales today
-    const debitBagsRows = db.prepare(
-      "SELECT bags FROM debit_sales WHERE date(created_at) = ?"
-    ).all(today);
-
-    let totalBagsDebit = 0;
-    debitBagsRows.forEach(r => {
-      const bags = JSON.parse(r.bags);
-      bags.forEach(b => { totalBagsDebit += Number(b.numberOfBags) || 0; });
-    });
-
-    const totalBags = totalBagsCash + totalBagsDebit;
-
-    // Expenses today
-    const expensesRow = db.prepare(
-      "SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE date(created_at) = ?"
-    ).get(today);
-
-    const expensesList = db.prepare(
-      "SELECT * FROM expenses WHERE date(created_at) = ? ORDER BY created_at DESC"
-    ).all(today);
-
-    const totalCash = cashRow.total;
-    const totalCredit = creditRow.total;
-    const totalExpenses = expensesRow.total;
-    const finalTotal = totalCash + totalCredit - totalExpenses;
-
-    res.json({
-      date: today,
-      totalCash,
-      totalCredit,
-      totalBags,
-      totalExpenses,
-      expenses: expensesList,
-      finalTotal
-    });
+    const date          = req.query.date || new Date().toISOString().slice(0, 10);
+    const raw           = db.getDailySummary(date);
+    const cashEntries   = db.getCashEntries(date);
+    const debitEntries  = db.getDebitEntries(date);
+    const creditEntries = db.getCreditEntries(date);
+    const expenses      = db.getExpenses(date);
+    const totalCash     = raw?.total_cash     || 0;
+    const totalDebit    = raw?.total_debit    || 0;
+    const totalCredit   = raw?.total_credit   || 0;
+    const totalExpenses = raw?.total_expenses || 0;
+    const finalTotal    = totalCash + totalCredit - totalExpenses;
+    const totalBags = debitEntries.reduce((sum, e) => {
+      const bags = Array.isArray(e.bags) ? e.bags : [];
+      return sum + bags.reduce((s, b) => s + (Number(b.numberOfBags) || 0), 0);
+    }, 0);
+    res.json({ date, totalCash, totalDebit, totalCredit, totalExpenses, finalTotal, totalBags,
+      entries: { cash: cashEntries, debit: debitEntries, credit: creditEntries, expense: expenses } });
   } catch (err) {
-    console.error('Error fetching today summary:', err);
-    res.status(500).json({ error: 'Failed to fetch today summary' });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/day-history — returns per-day summary for all past days
 router.get('/day-history', (req, res) => {
   try {
-    // Get all unique dates from all tables
-    const dates = db.prepare(`
-      SELECT DISTINCT date(created_at) as day FROM (
-        SELECT created_at FROM cash_sales
-        UNION ALL
-        SELECT created_at FROM credit_received
-        UNION ALL
-        SELECT created_at FROM debit_sales
-        UNION ALL
-        SELECT created_at FROM expenses
-      ) ORDER BY day DESC
-    `).all();
-
-    const history = dates.map(({ day }) => {
-      const cashRow = db.prepare(
-        "SELECT COALESCE(SUM(grand_total), 0) as total FROM cash_sales WHERE date(created_at) = ?"
-      ).get(day);
-
-      const creditRow = db.prepare(
-        "SELECT COALESCE(SUM(amount), 0) as total FROM credit_received WHERE date(created_at) = ?"
-      ).get(day);
-
-      // Count bags
-      const cashBagsRows = db.prepare(
-        "SELECT bags FROM cash_sales WHERE date(created_at) = ?"
-      ).all(day);
-      let totalBagsCash = 0;
-      cashBagsRows.forEach(r => {
-        const bags = JSON.parse(r.bags);
-        bags.forEach(b => { totalBagsCash += Number(b.numberOfBags) || 0; });
-      });
-
-      const debitBagsRows = db.prepare(
-        "SELECT bags FROM debit_sales WHERE date(created_at) = ?"
-      ).all(day);
-      let totalBagsDebit = 0;
-      debitBagsRows.forEach(r => {
-        const bags = JSON.parse(r.bags);
-        bags.forEach(b => { totalBagsDebit += Number(b.numberOfBags) || 0; });
-      });
-
-      const expensesRow = db.prepare(
-        "SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE date(created_at) = ?"
-      ).get(day);
-
-      return {
-        date: day,
-        totalBags: totalBagsCash + totalBagsDebit,
-        cashTotal: cashRow.total,
-        creditTotal: creditRow.total,
-        expenses: expensesRow.total,
-        finalTotal: cashRow.total + creditRow.total - expensesRow.total
-      };
-    });
-
-    res.json(history);
+    const rows = db.getAllDailySummaries();
+    res.json(rows.map(r => {
+      const totalCash  = r.total_cash     || 0;
+      const totalDebit = r.total_debit    || 0;
+      const totalCredit= r.total_credit   || 0;
+      const expenses   = r.total_expenses || 0;
+      return { date: r.date, totalCash, totalDebit, totalCredit, expenses, finalTotal: totalCash + totalCredit - expenses };
+    }));
   } catch (err) {
-    console.error('Error fetching day history:', err);
-    res.status(500).json({ error: 'Failed to fetch day history' });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/customer-records/:name — returns all debit + credit for a customer
+router.get('/all-customers', (req, res) => {
+  try { res.json(db.getAllCustomersSummary()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.get('/customer-records/:name', (req, res) => {
   try {
-    const name = req.params.name;
+    const name = decodeURIComponent(req.params.name);
+    res.json({ name, ledger: db.getCustomerLedger(name), balance: db.getCustomerBalance(name) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-    const debitRows = db.prepare(
-      "SELECT * FROM debit_sales WHERE customer_name = ? ORDER BY created_at DESC"
-    ).all(name);
-    const parsedDebit = debitRows.map(r => ({ ...r, bags: JSON.parse(r.bags) }));
-
-    const creditRows = db.prepare(
-      "SELECT * FROM credit_received WHERE customer_name = ? ORDER BY created_at DESC"
-    ).all(name);
-
-    const totalDebit = debitRows.reduce((sum, r) => sum + r.grand_total, 0);
-    const totalCredit = creditRows.reduce((sum, r) => sum + r.amount, 0);
-    const balance = totalDebit - totalCredit;
-
+router.get('/range', (req, res) => {
+  try {
+    const { from, to } = req.query;
+    if (!from || !to) return res.status(400).json({ error: 'from and to required' });
+    const inRange = d => d && d >= from && d <= to;
+    const summaries = db.getAllDailySummaries()
+      .filter(r => inRange(r.date))
+      .sort((a,b) => a.date.localeCompare(b.date))
+      .map(r => {
+        const tc = r.total_cash||0, td = r.total_debit||0, tcr = r.total_credit||0, te = r.total_expenses||0;
+        return { ...r, total_cash:tc, total_debit:td, total_credit:tcr, total_expenses:te, net_balance: tc+tcr-te };
+      });
     res.json({
-      customerName: name,
-      debitSales: parsedDebit,
-      creditReceived: creditRows,
-      totalDebit,
-      totalCredit,
-      balance
+      summaries,
+      cashEntries:   db.getCashEntries(null).filter(e   => inRange(e.date)),
+      debitEntries:  db.getDebitEntries(null).filter(e  => inRange(e.date)),
+      creditEntries: db.getCreditEntries(null).filter(e => inRange(e.date)),
+      expenses:      db.getExpenses(null).filter(e      => inRange(e.date))
     });
   } catch (err) {
-    console.error('Error fetching customer records:', err);
-    res.status(500).json({ error: 'Failed to fetch customer records' });
+    res.status(500).json({ error: err.message });
   }
 });
 

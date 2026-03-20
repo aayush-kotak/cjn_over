@@ -1,22 +1,27 @@
 const express = require('express');
 const router = express.Router();
-const { insert, getAll } = require('../db/database');
+const { insertCashEntry, getCashEntries } = require('../db/database');
 
 router.post('/', (req, res) => {
   try {
-    const record = insert('cash_sales', req.body);
-    res.json({ success: true, data: record });
+    const { date, customer_name, bags, grandTotal, amount, note } = req.body;
+    const finalAmount   = Number(grandTotal) || Number(amount) || 0;
+    const finalCustomer = (customer_name || 'CASH CUSTOMER').trim();
+    const finalDate     = date || new Date().toISOString().slice(0, 10);
+    if (finalAmount <= 0) return res.status(400).json({ error: 'Amount must be > 0' });
+    insertCashEntry(finalDate, finalCustomer, finalAmount, bags || [], note || '');
+    res.status(201).json({ success: true, message: 'Cash sale saved' });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('CashSale Error:', err.message);
+    res.status(500).json({ error: 'Failed: ' + err.message });
   }
 });
 
 router.get('/', (req, res) => {
   try {
-    const records = getAll('cash_sales');
-    res.json({ success: true, data: records });
+    res.json(getCashEntries(req.query.date || null));
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ error: 'Failed to fetch' });
   }
 });
 

@@ -1,0 +1,39 @@
+{
+  "cash_sales": [
+    {
+      "id": 1773234951473,
+      "bags": [
+        {
+          "bagName": "xad",
+          "numberOfBags": "1",
+          "pricePerBag": "1450"
+        }
+      ],
+      "grandTotal": 1450,
+      "created_at": "2026-03-11T13:15:51.473Z"
+    },
+    {
+      "id": 1773409621797,
+      "bags": [
+        {
+          "bagName": "ad",
+          "numberOfBags": "2",
+          "pricePerBag": "1450"
+        }
+      ],
+      "grandTotal": 2900,
+      "created_at": "2026-03-13T13:47:01.797Z"
+    }
+  ],
+  "credit_received": [
+    {
+      "id": 1773234967712,
+      "customerName": "LALBHAI JALSIKA",
+      "amount": 10000,
+      "note": "",
+      "created_at": "2026-03-11T13:16:07.712Z"
+    }
+  ],
+  "debit_sales": [],
+  "expenses": []
+}
