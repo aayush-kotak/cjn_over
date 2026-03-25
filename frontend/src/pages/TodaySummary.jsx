@@ -1,44 +1,36 @@
 import { useState, useEffect } from 'react';
 import { showToast } from '../components/Toast';
+import { apiFetch } from '../utils/api';
 
 const getTodayDate = () => new Date().toISOString().slice(0, 10);
 const fmtDate = d => { try { return new Date(d+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); } catch { return d||''; } };
 
-// ── Detail Modal Component ────────────────────────────────────
+// ── Detail Modal ──────────────────────────────────────────────
 function DetailModal({ title, icon, onClose, children }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
       onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col border border-border">
-        {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-border">
           <div className="flex items-center gap-3">
             <span className="text-2xl">{icon}</span>
             <h2 className="text-lg font-black text-primary-dark">{title}</h2>
           </div>
-          <button onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-500 font-bold transition-colors text-lg">
-            ✕
-          </button>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-500 font-bold transition-colors text-lg">✕</button>
         </div>
-        {/* Scrollable content */}
-        <div className="overflow-y-auto flex-1 p-5">
-          {children}
-        </div>
+        <div className="overflow-y-auto flex-1 p-5">{children}</div>
       </div>
     </div>
   );
 }
 
-// ── Clickable Summary Card ────────────────────────────────────
+// ── Clickable Card ────────────────────────────────────────────
 function ClickCard({ icon, label, value, gradient, onClick, badge }) {
   return (
     <button onClick={onClick}
       className={`bg-gradient-to-br ${gradient} text-white p-5 rounded-2xl shadow-lg hover:shadow-xl hover:scale-[1.03] active:scale-[0.98] transition-all w-full text-left relative cursor-pointer`}>
-      {badge && (
-        <span className="absolute top-2 right-2 bg-white/30 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-          {badge} entries
-        </span>
+      {badge > 0 && (
+        <span className="absolute top-2 right-2 bg-white/30 text-white text-xs font-bold px-2 py-0.5 rounded-full">{badge} entries</span>
       )}
       <div className="flex items-center gap-2 mb-2">
         <span className="text-2xl">{icon}</span>
@@ -51,17 +43,17 @@ function ClickCard({ icon, label, value, gradient, onClick, badge }) {
 }
 
 export default function TodaySummary() {
-  const [summary, setSummary]               = useState(null);
-  const [history, setHistory]               = useState([]);
+  const [summary, setSummary]             = useState(null);
+  const [history, setHistory]             = useState([]);
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [loadingHistory, setLoadingHistory] = useState(true);
-  const [generatingPdf, setGeneratingPdf]   = useState(false);
-  const [activeModal, setActiveModal]       = useState(null); // 'cash'|'credit'|'debit'|'combined'
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [activeModal, setActiveModal]     = useState(null);
 
   // PDF modal
-  const [showPdfModal, setShowPdfModal] = useState(false);
-  const [pdfFrom, setPdfFrom]           = useState(getTodayDate());
-  const [pdfTo, setPdfTo]               = useState(getTodayDate());
+  const [showPdfModal, setShowPdfModal]   = useState(false);
+  const [pdfFrom, setPdfFrom]             = useState(getTodayDate());
+  const [pdfTo, setPdfTo]                 = useState(getTodayDate());
 
   // Expense form
   const [expDesc, setExpDesc]             = useState('');
@@ -69,21 +61,23 @@ export default function TodaySummary() {
   const [savingExpense, setSavingExpense] = useState(false);
   const [labourers, setLabourers]         = useState(1);
 
+  // ── Fetch today summary ───────────────────────────────────
   const fetchSummary = async () => {
     setLoadingSummary(true);
     try {
-      const res = await fetch(`/api/summary/today-summary?date=${getTodayDate()}`);
-      if (!res.ok) throw new Error('Failed');
+      const res = await apiFetch(`/api/summary/today-summary?date=${getTodayDate()}`);
+      if (!res || !res.ok) throw new Error('Failed');
       setSummary(await res.json());
     } catch { showToast('Failed to load summary', 'error'); }
     finally  { setLoadingSummary(false); }
   };
 
+  // ── Fetch day history ─────────────────────────────────────
   const fetchHistory = async () => {
     setLoadingHistory(true);
     try {
-      const res = await fetch('/api/summary/day-history');
-      if (!res.ok) throw new Error('Failed');
+      const res = await apiFetch('/api/summary/day-history');
+      if (!res || !res.ok) throw new Error('Failed');
       setHistory(await res.json());
     } catch { showToast('Failed to load history', 'error'); }
     finally  { setLoadingHistory(false); }
@@ -91,17 +85,18 @@ export default function TodaySummary() {
 
   useEffect(() => { fetchSummary(); fetchHistory(); }, []);
 
+  // ── Add expense ───────────────────────────────────────────
   const handleAddExpense = async () => {
     if (!expDesc.trim() || !Number(expAmt)) {
       showToast('Enter expense description and amount', 'error'); return;
     }
     setSavingExpense(true);
     try {
-      const res = await fetch('/api/expenses', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const res = await apiFetch('/api/expenses', {
+        method: 'POST',
         body: JSON.stringify({ date: getTodayDate(), amount: Number(expAmt), category: expDesc.trim(), note: expDesc.trim() })
       });
-      if (!res.ok) throw new Error('Failed');
+      if (!res || !res.ok) throw new Error('Failed');
       showToast('Expense saved!');
       setExpDesc(''); setExpAmt('');
       fetchSummary(); fetchHistory();
@@ -109,7 +104,7 @@ export default function TodaySummary() {
     finally  { setSavingExpense(false); }
   };
 
-  // ── PDF GENERATOR ─────────────────────────────────────────────
+  // ── PDF GENERATOR ─────────────────────────────────────────
   const handleGeneratePdf = async () => {
     if (!pdfFrom || !pdfTo) { showToast('Select both dates', 'error'); return; }
     if (pdfFrom > pdfTo)    { showToast('From date cannot be after To date', 'error'); return; }
@@ -124,8 +119,10 @@ export default function TodaySummary() {
           document.head.appendChild(s);
         });
       }
-      const res = await fetch(`/api/summary/range?from=${pdfFrom}&to=${pdfTo}`);
-      if (!res.ok) throw new Error('Server error: ' + res.status);
+
+      // Use apiFetch so token is included
+      const res = await apiFetch(`/api/summary/range?from=${pdfFrom}&to=${pdfTo}`);
+      if (!res || !res.ok) throw new Error('Server error: ' + (res?.status || 'unknown'));
       const text = await res.text();
       let data;
       try { data = JSON.parse(text); } catch { throw new Error('Server returned non-JSON. Restart server.'); }
@@ -139,7 +136,7 @@ export default function TodaySummary() {
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
       const PW=210, MG=12, CW=PW-MG*2; let y=0;
-      const fmt = n => 'Rs.'+Number(n||0).toLocaleString('en-IN');
+      const fmt     = n => 'Rs.'+Number(n||0).toLocaleString('en-IN');
       const checkBr = (need=12) => { if (y+need>278) { doc.addPage(); y=16; } };
       const fillRect = (x,ry,w,h,rgb) => { doc.setFillColor(...rgb); doc.rect(x,ry,w,h,'F'); };
       const txt = (str,x,ry,opts={}) => {
@@ -161,7 +158,6 @@ export default function TodaySummary() {
       const gExp=summaries.reduce((s,d)=>s+(d.total_expenses||0),0);
       const gNet=gCash+gCredit-gExp;
 
-      // Summary cards
       const cards=[
         {label:'TOTAL CASH',val:fmt(gCash),bg:[209,250,229],tc:[21,128,61]},
         {label:'TOTAL DEBIT',val:fmt(gDebit),bg:[254,226,226],tc:[185,28,28]},
@@ -181,7 +177,7 @@ export default function TodaySummary() {
       y+=26;
       doc.setDrawColor(22,101,52); doc.setLineWidth(0.5); doc.line(MG,y,PW-MG,y); y+=6;
 
-      // Day summary
+      // Day summary table
       checkBr(20); fillRect(MG,y,CW,8,[22,101,52]);
       txt('  DAY-BY-DAY SUMMARY',MG+2,y+5.5,{size:10,bold:true,color:[255,255,255]}); y+=10;
       const dX=[MG+2,MG+36,MG+68,MG+100,MG+132,MG+160],dW=[32,30,30,30,26,26];
@@ -212,7 +208,7 @@ export default function TodaySummary() {
           txt(`  ${fmtDate(date)}`,MG+2,y+4.8,{size:9,bold:true,color:[185,28,28]}); y+=7;
           const dCX=[MG+2,MG+48,MG+95,MG+118,MG+142,MG+164];
           fillRect(MG,y,CW,6.5,[220,60,60]);
-          ['Customer','Bag Name','Qty','Rate','Subtotal','Note'].forEach((h,i)=>txt(h,dCX[i],y+4.5,{size:7,bold:true,color:[255,255,255],maxW:20,align:i>=2?'right':'left'}));
+          ['Customer','Bag Name','Qty','Rate','Subtotal','Note'].forEach((h,i)=>txt(h,dCX[i],y+4.5,{size:7,bold:true,color:[255,255,255],maxW:44,align:i>=2?'right':'left'}));
           y+=6.5;
           let dt=0;
           byd[date].forEach((entry,ri)=>{
@@ -329,7 +325,7 @@ export default function TodaySummary() {
       txt(`Cash ${fmt(gCash)}  +  Credit ${fmt(gCredit)}  −  Expenses ${fmt(gExp)}`,PW/2,y+15,{size:8,color:[187,247,208],align:'center'});
       txt(fmt(gNet),PW/2,y+23,{size:16,bold:true,color:[255,255,255],align:'center'}); y+=32;
 
-      // Footer
+      // Footer on all pages
       const tp=doc.internal.getNumberOfPages();
       for(let p=1;p<=tp;p++){
         doc.setPage(p); doc.setDrawColor(200,200,200); doc.setLineWidth(0.3); doc.line(MG,288,PW-MG,288);
@@ -368,16 +364,11 @@ export default function TodaySummary() {
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
 
-      {/* ── DETAIL MODALS ─────────────────────────────────────── */}
-
-      {/* Cash Modal */}
+      {/* ── DETAIL MODALS ─────────────────────────────────── */}
       {activeModal === 'cash' && (
         <DetailModal title="Today's Cash Sale Entries" icon="💰" onClose={() => setActiveModal(null)}>
           {cashEntries.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="text-4xl mb-2">💰</div>
-              <p className="text-text-secondary font-medium">No cash sales recorded today</p>
-            </div>
+            <div className="text-center py-12"><div className="text-4xl mb-2">💰</div><p className="text-text-secondary font-medium">No cash sales recorded today</p></div>
           ) : (
             <>
               <div className="space-y-3">
@@ -398,25 +389,8 @@ export default function TodaySummary() {
                       </div>
                       {bags.length > 0 && (
                         <div className="border-t border-green-200 pt-2 mt-2">
-                          <table className="w-full text-xs">
-                            <thead>
-                              <tr className="text-text-secondary">
-                                <th className="text-left py-1">Bag Name</th>
-                                <th className="text-center py-1">Qty</th>
-                                <th className="text-right py-1">Price/Bag</th>
-                                <th className="text-right py-1">Subtotal</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {bags.map((bag, bi) => (
-                                <tr key={bi} className="border-t border-green-100">
-                                  <td className="py-1 font-medium">{bag.bagName}</td>
-                                  <td className="py-1 text-center">{bag.numberOfBags}</td>
-                                  <td className="py-1 text-right">Rs.{Number(bag.pricePerBag).toLocaleString('en-IN')}</td>
-                                  <td className="py-1 text-right font-bold text-emerald-600">Rs.{((Number(bag.numberOfBags)||0)*(Number(bag.pricePerBag)||0)).toLocaleString('en-IN')}</td>
-                                </tr>
-                              ))}
-                            </tbody>
+                          <table className="w-full text-xs"><thead><tr className="text-text-secondary"><th className="text-left py-1">Bag Name</th><th className="text-center py-1">Qty</th><th className="text-right py-1">Price/Bag</th><th className="text-right py-1">Subtotal</th></tr></thead>
+                            <tbody>{bags.map((bag, bi) => (<tr key={bi} className="border-t border-green-100"><td className="py-1 font-medium">{bag.bagName}</td><td className="py-1 text-center">{bag.numberOfBags}</td><td className="py-1 text-right">Rs.{Number(bag.pricePerBag).toLocaleString('en-IN')}</td><td className="py-1 text-right font-bold text-emerald-600">Rs.{((Number(bag.numberOfBags)||0)*(Number(bag.pricePerBag)||0)).toLocaleString('en-IN')}</td></tr>))}</tbody>
                           </table>
                         </div>
                       )}
@@ -433,14 +407,10 @@ export default function TodaySummary() {
         </DetailModal>
       )}
 
-      {/* Credit Modal */}
       {activeModal === 'credit' && (
         <DetailModal title="Today's Credit Received Entries" icon="📥" onClose={() => setActiveModal(null)}>
           {creditEntries.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="text-4xl mb-2">📥</div>
-              <p className="text-text-secondary font-medium">No credit received today</p>
-            </div>
+            <div className="text-center py-12"><div className="text-4xl mb-2">📥</div><p className="text-text-secondary font-medium">No credit received today</p></div>
           ) : (
             <>
               <div className="space-y-3">
@@ -464,14 +434,10 @@ export default function TodaySummary() {
         </DetailModal>
       )}
 
-      {/* Debit Modal */}
       {activeModal === 'debit' && (
         <DetailModal title="Today's Debit Sale Entries" icon="📤" onClose={() => setActiveModal(null)}>
           {debitEntries.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="text-4xl mb-2">📤</div>
-              <p className="text-text-secondary font-medium">No debit sales recorded today</p>
-            </div>
+            <div className="text-center py-12"><div className="text-4xl mb-2">📤</div><p className="text-text-secondary font-medium">No debit sales recorded today</p></div>
           ) : (
             <>
               <div className="space-y-3">
@@ -492,25 +458,8 @@ export default function TodaySummary() {
                       </div>
                       {bags.length > 0 && (
                         <div className="border-t border-red-200 pt-2 mt-2">
-                          <table className="w-full text-xs">
-                            <thead>
-                              <tr className="text-text-secondary">
-                                <th className="text-left py-1">Bag Name</th>
-                                <th className="text-center py-1">Qty</th>
-                                <th className="text-right py-1">Price/Bag</th>
-                                <th className="text-right py-1">Subtotal</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {bags.map((bag, bi) => (
-                                <tr key={bi} className="border-t border-red-100">
-                                  <td className="py-1 font-medium">{bag.bagName}</td>
-                                  <td className="py-1 text-center">{bag.numberOfBags}</td>
-                                  <td className="py-1 text-right">Rs.{Number(bag.pricePerBag).toLocaleString('en-IN')}</td>
-                                  <td className="py-1 text-right font-bold text-red-600">Rs.{((Number(bag.numberOfBags)||0)*(Number(bag.pricePerBag)||0)).toLocaleString('en-IN')}</td>
-                                </tr>
-                              ))}
-                            </tbody>
+                          <table className="w-full text-xs"><thead><tr className="text-text-secondary"><th className="text-left py-1">Bag Name</th><th className="text-center py-1">Qty</th><th className="text-right py-1">Price/Bag</th><th className="text-right py-1">Subtotal</th></tr></thead>
+                            <tbody>{bags.map((bag, bi) => (<tr key={bi} className="border-t border-red-100"><td className="py-1 font-medium">{bag.bagName}</td><td className="py-1 text-center">{bag.numberOfBags}</td><td className="py-1 text-right">Rs.{Number(bag.pricePerBag).toLocaleString('en-IN')}</td><td className="py-1 text-right font-bold text-red-600">Rs.{((Number(bag.numberOfBags)||0)*(Number(bag.pricePerBag)||0)).toLocaleString('en-IN')}</td></tr>))}</tbody>
                           </table>
                         </div>
                       )}
@@ -527,23 +476,15 @@ export default function TodaySummary() {
         </DetailModal>
       )}
 
-      {/* Combined Modal */}
       {activeModal === 'combined' && (
         <DetailModal title="Combined Revenue — All Entries" icon="📈" onClose={() => setActiveModal(null)}>
           {cashEntries.length === 0 && creditEntries.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="text-4xl mb-2">📈</div>
-              <p className="text-text-secondary font-medium">No revenue entries today</p>
-            </div>
+            <div className="text-center py-12"><div className="text-4xl mb-2">📈</div><p className="text-text-secondary font-medium">No revenue entries today</p></div>
           ) : (
             <>
-              {/* Cash section */}
               {cashEntries.length > 0 && (
                 <div className="mb-5">
-                  <h3 className="text-sm font-black text-emerald-700 bg-emerald-50 px-3 py-2 rounded-xl mb-3 flex justify-between">
-                    <span>💰 Cash Sales</span>
-                    <span>Rs.{(summary?.totalCash||0).toLocaleString('en-IN')}</span>
-                  </h3>
+                  <h3 className="text-sm font-black text-emerald-700 bg-emerald-50 px-3 py-2 rounded-xl mb-3 flex justify-between"><span>💰 Cash Sales</span><span>Rs.{(summary?.totalCash||0).toLocaleString('en-IN')}</span></h3>
                   <div className="space-y-2">
                     {cashEntries.map((entry, i) => {
                       const bags = Array.isArray(entry.bags) ? entry.bags : [];
@@ -562,13 +503,9 @@ export default function TodaySummary() {
                   </div>
                 </div>
               )}
-              {/* Credit section */}
               {creditEntries.length > 0 && (
                 <div className="mb-5">
-                  <h3 className="text-sm font-black text-amber-700 bg-amber-50 px-3 py-2 rounded-xl mb-3 flex justify-between">
-                    <span>📥 Credit Received</span>
-                    <span>Rs.{(summary?.totalCredit||0).toLocaleString('en-IN')}</span>
-                  </h3>
+                  <h3 className="text-sm font-black text-amber-700 bg-amber-50 px-3 py-2 rounded-xl mb-3 flex justify-between"><span>📥 Credit Received</span><span>Rs.{(summary?.totalCredit||0).toLocaleString('en-IN')}</span></h3>
                   <div className="space-y-2">
                     {creditEntries.map((entry, i) => (
                       <div key={entry.id||i} className="flex justify-between items-center bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
@@ -591,31 +528,26 @@ export default function TodaySummary() {
         </DetailModal>
       )}
 
-      {/* ── PDF DATE RANGE MODAL ─────────────────────────────── */}
+      {/* ── PDF MODAL ─────────────────────────────────────── */}
       {showPdfModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md border border-border overflow-hidden">
             <div className="bg-gradient-to-r from-red-600 to-red-500 p-5">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center text-xl">📄</div>
-                <div>
-                  <h2 className="text-lg font-black text-white">Download PDF Report</h2>
-                  <p className="text-xs text-red-100">Select the date range for the report</p>
-                </div>
+                <div><h2 className="text-lg font-black text-white">Download PDF Report</h2><p className="text-xs text-red-100">Select the date range</p></div>
               </div>
             </div>
             <div className="p-5">
               <div className="grid grid-cols-2 gap-4 mb-4">
                 <div>
                   <label className="block text-xs font-bold text-primary-dark mb-1.5 uppercase">From Date *</label>
-                  <input type="date" value={pdfFrom} onChange={e=>setPdfFrom(e.target.value)}
-                    min={minDateStr} max={pdfTo||todayStr}
+                  <input type="date" value={pdfFrom} onChange={e=>setPdfFrom(e.target.value)} min={minDateStr} max={pdfTo||todayStr}
                     className="w-full px-3 py-2.5 rounded-xl border-2 border-border bg-white focus:border-red-500 outline-none text-sm font-medium"/>
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-primary-dark mb-1.5 uppercase">To Date *</label>
-                  <input type="date" value={pdfTo} onChange={e=>setPdfTo(e.target.value)}
-                    min={pdfFrom||minDateStr} max={todayStr}
+                  <input type="date" value={pdfTo} onChange={e=>setPdfTo(e.target.value)} min={pdfFrom||minDateStr} max={todayStr}
                     className="w-full px-3 py-2.5 rounded-xl border-2 border-border bg-white focus:border-red-500 outline-none text-sm font-medium"/>
                 </div>
               </div>
@@ -623,10 +555,10 @@ export default function TodaySummary() {
                 <p className="text-xs font-bold text-text-secondary uppercase mb-2">Quick Select</p>
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    {label:'Today',       from:todayStr, to:todayStr},
-                    {label:'Last 7 Days', from:new Date(Date.now()-6*86400000).toISOString().slice(0,10), to:todayStr},
-                    {label:'This Month',  from:new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().slice(0,10), to:todayStr},
-                    {label:'Last 30 Days',from:new Date(Date.now()-29*86400000).toISOString().slice(0,10), to:todayStr},
+                    {label:'Today',        from:todayStr, to:todayStr},
+                    {label:'Last 7 Days',  from:new Date(Date.now()-6*86400000).toISOString().slice(0,10), to:todayStr},
+                    {label:'This Month',   from:new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().slice(0,10), to:todayStr},
+                    {label:'Last 30 Days', from:new Date(Date.now()-29*86400000).toISOString().slice(0,10), to:todayStr},
                   ].map(q=>(
                     <button key={q.label} onClick={()=>{setPdfFrom(q.from);setPdfTo(q.to);}}
                       className="text-xs font-bold py-2 px-3 bg-gray-50 border-2 border-border text-text-secondary hover:bg-primary/10 hover:border-primary hover:text-primary rounded-xl transition-all">
@@ -637,19 +569,14 @@ export default function TodaySummary() {
               </div>
               {pdfFrom && pdfTo && (
                 <div className="bg-green-50 border-2 border-primary/20 rounded-xl p-3 mb-5 text-center">
-                  <p className="text-xs text-text-secondary mb-0.5">Report will include all data from</p>
+                  <p className="text-xs text-text-secondary mb-0.5">Report from</p>
                   <p className="text-sm font-black text-primary-dark">
-                    {new Date(pdfFrom+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
-                    &nbsp;→&nbsp;
-                    {new Date(pdfTo+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
+                    {new Date(pdfFrom+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})} → {new Date(pdfTo+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
                   </p>
                 </div>
               )}
               <div className="flex gap-3">
-                <button onClick={()=>setShowPdfModal(false)}
-                  className="flex-1 py-3 border-2 border-border text-text-secondary font-bold rounded-xl hover:bg-bg transition-colors">
-                  Cancel
-                </button>
+                <button onClick={()=>setShowPdfModal(false)} className="flex-1 py-3 border-2 border-border text-text-secondary font-bold rounded-xl hover:bg-bg transition-colors">Cancel</button>
                 <button onClick={handleGeneratePdf} disabled={!pdfFrom||!pdfTo}
                   className="flex-1 py-3 bg-gradient-to-r from-red-600 to-red-500 text-white font-black rounded-xl hover:shadow-lg transition-all disabled:opacity-50 flex items-center justify-center gap-2">
                   <span>📥</span> Generate & Download
@@ -660,26 +587,22 @@ export default function TodaySummary() {
         </div>
       )}
 
-      {/* ── PAGE HEADER ───────────────────────────────────────── */}
+      {/* ── PAGE HEADER ───────────────────────────────────── */}
       <div className="mb-8 flex items-start justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 bg-gradient-to-br from-indigo-600 to-blue-500 rounded-xl flex items-center justify-center text-2xl shadow-lg">📊</div>
           <div>
             <h1 className="text-2xl font-black text-primary-dark">Today's Summary</h1>
-            <p className="text-sm text-text-secondary">
-              {new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}
-            </p>
+            <p className="text-sm text-text-secondary">{new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</p>
           </div>
         </div>
         <button onClick={()=>setShowPdfModal(true)} disabled={generatingPdf}
-          className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-red-600 to-red-500 text-white font-black rounded-xl shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all disabled:opacity-60 disabled:cursor-not-allowed">
-          {generatingPdf
-            ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> Generating...</>
-            : <><span className="text-lg">📄</span> Download PDF Report</>}
+          className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-red-600 to-red-500 text-white font-black rounded-xl shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all disabled:opacity-60">
+          {generatingPdf ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> Generating...</> : <><span className="text-lg">📄</span> Download PDF Report</>}
         </button>
       </div>
 
-      {/* ── CLICKABLE SUMMARY CARDS ───────────────────────────── */}
+      {/* ── SUMMARY CARDS ─────────────────────────────────── */}
       <section className="mb-8">
         <h2 className="text-lg font-bold text-primary-dark mb-4 flex items-center gap-2">
           <span className="w-1.5 h-6 bg-primary rounded-full"></span>
@@ -687,38 +610,17 @@ export default function TodaySummary() {
           <span className="text-xs font-normal text-text-secondary ml-1">(tap any card to view entries)</span>
         </h2>
         <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          <ClickCard icon="💰" label="Total Cash Collected"
-            value={`Rs.${(summary?.totalCash||0).toLocaleString('en-IN')}`}
-            gradient="from-emerald-600 to-green-500"
-            badge={cashEntries.length}
-            onClick={() => setActiveModal('cash')} />
-          <ClickCard icon="📥" label="Total Credit Received"
-            value={`Rs.${(summary?.totalCredit||0).toLocaleString('en-IN')}`}
-            gradient="from-amber-600 to-yellow-500"
-            badge={creditEntries.length}
-            onClick={() => setActiveModal('credit')} />
-          <ClickCard icon="📦" label="Total Bags Sold"
-            value={totalBags}
-            gradient="from-teal-600 to-cyan-500"
-            onClick={() => {}} />
-          <ClickCard icon="📈" label="Combined Revenue"
-            value={`Rs.${((summary?.totalCash||0)+(summary?.totalCredit||0)).toLocaleString('en-IN')}`}
-            gradient="from-indigo-600 to-blue-500"
-            badge={cashEntries.length + creditEntries.length}
-            onClick={() => setActiveModal('combined')} />
-          <ClickCard icon="📤" label="Debit Done (Per Day)"
-            value={`Rs.${(summary?.totalDebit||0).toLocaleString('en-IN')}`}
-            gradient="from-red-600 to-rose-500"
-            badge={debitEntries.length}
-            onClick={() => setActiveModal('debit')} />
+          <ClickCard icon="💰" label="Total Cash Collected"  value={`Rs.${(summary?.totalCash||0).toLocaleString('en-IN')}`}  gradient="from-emerald-600 to-green-500"  badge={cashEntries.length}                          onClick={() => setActiveModal('cash')} />
+          <ClickCard icon="📥" label="Total Credit Received" value={`Rs.${(summary?.totalCredit||0).toLocaleString('en-IN')}`} gradient="from-amber-600 to-yellow-500"   badge={creditEntries.length}                        onClick={() => setActiveModal('credit')} />
+          <ClickCard icon="📦" label="Total Bags Sold"       value={totalBags}                                                  gradient="from-teal-600 to-cyan-500"                                                            onClick={() => {}} />
+          <ClickCard icon="📈" label="Combined Revenue"      value={`Rs.${((summary?.totalCash||0)+(summary?.totalCredit||0)).toLocaleString('en-IN')}`} gradient="from-indigo-600 to-blue-500" badge={cashEntries.length+creditEntries.length} onClick={() => setActiveModal('combined')} />
+          <ClickCard icon="📤" label="Debit Done (Per Day)"  value={`Rs.${(summary?.totalDebit||0).toLocaleString('en-IN')}`}  gradient="from-red-600 to-rose-500"      badge={debitEntries.length}                         onClick={() => setActiveModal('debit')} />
         </div>
       </section>
 
-      {/* Expenses */}
+      {/* ── EXPENSES ──────────────────────────────────────── */}
       <section className="mb-8">
-        <h2 className="text-lg font-bold text-primary-dark mb-4 flex items-center gap-2">
-          <span className="w-1.5 h-6 bg-warning rounded-full"></span>Today's Kharcho (Expenses)
-        </h2>
+        <h2 className="text-lg font-bold text-primary-dark mb-4 flex items-center gap-2"><span className="w-1.5 h-6 bg-warning rounded-full"></span>Today's Kharcho (Expenses)</h2>
         <div className="bg-white rounded-2xl shadow-md border border-border p-6">
           <div className="flex flex-col sm:flex-row gap-3 mb-5">
             <input type="text" value={expDesc} onChange={e=>setExpDesc(e.target.value)} placeholder="Expense description"
@@ -753,25 +655,14 @@ export default function TodaySummary() {
         </div>
       </section>
 
-      {/* Labour */}
+      {/* ── LABOUR ────────────────────────────────────────── */}
       <section className="mb-8">
-        <h2 className="text-lg font-bold text-primary-dark mb-4 flex items-center gap-2">
-          <span className="w-1.5 h-6 bg-primary-light rounded-full"></span>Labour Calculation
-        </h2>
+        <h2 className="text-lg font-bold text-primary-dark mb-4 flex items-center gap-2"><span className="w-1.5 h-6 bg-primary-light rounded-full"></span>Labour Calculation</h2>
         <div className="bg-white rounded-2xl shadow-md border border-border p-6">
           <div className="grid sm:grid-cols-3 gap-4 mb-4">
-            <div className="text-center p-4 bg-bg rounded-xl">
-              <p className="text-xs text-text-secondary font-semibold uppercase mb-1">Total Bags</p>
-              <p className="text-2xl font-black text-primary-dark">{totalBags}</p>
-            </div>
-            <div className="text-center p-4 bg-bg rounded-xl">
-              <p className="text-xs text-text-secondary font-semibold uppercase mb-1">Rate / Bag</p>
-              <p className="text-2xl font-black text-primary-dark">Rs.3</p>
-            </div>
-            <div className="text-center p-4 bg-gold/20 rounded-xl">
-              <p className="text-xs text-text-secondary font-semibold uppercase mb-1">Total Labour</p>
-              <p className="text-2xl font-black text-primary-dark">Rs.{totalLabourCost.toLocaleString('en-IN')}</p>
-            </div>
+            <div className="text-center p-4 bg-bg rounded-xl"><p className="text-xs text-text-secondary font-semibold uppercase mb-1">Total Bags</p><p className="text-2xl font-black text-primary-dark">{totalBags}</p></div>
+            <div className="text-center p-4 bg-bg rounded-xl"><p className="text-xs text-text-secondary font-semibold uppercase mb-1">Rate / Bag</p><p className="text-2xl font-black text-primary-dark">Rs.3</p></div>
+            <div className="text-center p-4 bg-gold/20 rounded-xl"><p className="text-xs text-text-secondary font-semibold uppercase mb-1">Total Labour</p><p className="text-2xl font-black text-primary-dark">Rs.{totalLabourCost.toLocaleString('en-IN')}</p></div>
           </div>
           <div className="flex flex-col sm:flex-row gap-4 items-center">
             <div className="flex-1">
@@ -789,17 +680,12 @@ export default function TodaySummary() {
         </div>
       </section>
 
-      {/* Day History */}
+      {/* ── DAY HISTORY ───────────────────────────────────── */}
       <section>
-        <h2 className="text-lg font-bold text-primary-dark mb-4 flex items-center gap-2">
-          <span className="w-1.5 h-6 bg-earth rounded-full"></span>Complete Day History
-        </h2>
+        <h2 className="text-lg font-bold text-primary-dark mb-4 flex items-center gap-2"><span className="w-1.5 h-6 bg-earth rounded-full"></span>Complete Day History</h2>
         <div className="bg-white rounded-2xl shadow-md border border-border overflow-hidden">
           {loadingHistory ? (
-            <div className="p-8 text-center">
-              <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
-              <p className="text-sm text-text-secondary">Loading...</p>
-            </div>
+            <div className="p-8 text-center"><div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-2"></div><p className="text-sm text-text-secondary">Loading...</p></div>
           ) : history.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -828,10 +714,7 @@ export default function TodaySummary() {
               </table>
             </div>
           ) : (
-            <div className="p-8 text-center">
-              <div className="text-4xl mb-2">📅</div>
-              <p className="text-text-secondary font-medium">No history yet. Start recording sales!</p>
-            </div>
+            <div className="p-8 text-center"><div className="text-4xl mb-2">📅</div><p className="text-text-secondary font-medium">No history yet. Start recording sales!</p></div>
           )}
         </div>
       </section>

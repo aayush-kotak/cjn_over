@@ -12,9 +12,22 @@ services:
         value: 10000
       - key: DATABASE_PATH
         value: /opt/render/project/src/data/cjn.db
-    # Persistent Disk support (requires a card for some accounts, or Starter plan)
-    # If the user stays on the free tier, the database resets on restart.
-    # To enable persistence, uncomment the disk section below (Requires Render Paid tier).
+      - key: ADMIN_USER
+        value: cjnadmin
+      - key: ADMIN_PASS
+        generateValue: true # Or you can specify a value here
+      - key: FAMILY_USER
+        value: cjnfamily
+      - key: FAMILY_PASS
+        generateValue: true # Or you can specify a value here
+      - key: NODE_ENV
+        value: production
+
+    # PERSISTENT STORAGE (Highly Recommended for SQLite)
+    # Note: Using disks on Render requires a paid plan (Starter or higher).
+    # On the 'Free' plan, data resets when the server sleeps/restarts.
+    # To enable: Create a disk named 'cjn-data' in your Render dashboard
+    # and map it to /opt/render/project/src/data
     # disks:
     #   - name: cjn-data
     #     mountPath: /opt/render/project/src/data

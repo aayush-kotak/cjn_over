@@ -428,8 +428,15 @@ const fs = require('fs');
 const dbDir  = path.join(__dirname);
 if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 
-const dbPath = path.join(dbDir, 'cjn.db');
-const db     = new Database(dbPath);
+const dbPath = process.env.DATABASE_PATH || path.join(dbDir, 'cjn.db');
+
+// Ensure parent directory exists if using a custom path
+if (process.env.DATABASE_PATH) {
+  const customDir = path.dirname(process.env.DATABASE_PATH);
+  if (!fs.existsSync(customDir)) fs.mkdirSync(customDir, { recursive: true });
+}
+
+const db = new Database(dbPath);
 
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
