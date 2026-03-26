@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { showToast } from '../components/Toast';
 import { apiFetch } from '../utils/api';
+import ConfirmModal from '../components/ConfirmModal';
+import EditTransactionModal from '../components/EditTransactionModal';
 
 const getTodayDate = () => new Date().toISOString().slice(0, 10);
 const fmtDate = d => { try { return new Date(d+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); } catch { return d||''; } };
@@ -50,6 +52,14 @@ export default function TodaySummary() {
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [activeModal, setActiveModal]     = useState(null);
 
+  const [editTarget, setEditTarget]       = useState(null);   // { type, entry }
+  const [deleteTarget, setDeleteTarget]   = useState(null);   // { type, entry }
+  const [deleteSaving, setDeleteSaving]  = useState(false);
+
+  const isAdmin = (() => {
+    try { return localStorage.getItem('cjn_role') === 'admin'; } catch { return false; }
+  })();
+
   // PDF modal
   const [showPdfModal, setShowPdfModal]   = useState(false);
   const [pdfFrom, setPdfFrom]             = useState(getTodayDate());
@@ -84,6 +94,49 @@ export default function TodaySummary() {
   };
 
   useEffect(() => { fetchSummary(); fetchHistory(); }, []);
+
+  const openEdit = (type, entry) => {
+    setDeleteTarget(null);
+    // Align types with EditTransactionModal
+    const modalType = type === 'cash' ? 'cash-sale' : (type === 'debit' ? 'debit-sale' : type);
+    setEditTarget({ type: modalType, entry });
+  };
+
+  const onEditSave = () => {
+    setEditTarget(null);
+    fetchSummary();
+    fetchHistory();
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return;
+    const { type, entry } = deleteTarget;
+
+    setDeleteSaving(true);
+    try {
+      let url = null;
+      if (type === 'cash') url = `/api/cash-sale/${entry.id}`;
+      if (type === 'debit') url = `/api/debit-sale/${entry.id}`;
+      if (type === 'credit') url = `/api/credit/${entry.id}`;
+      if (type === 'expenses') url = `/api/expenses/${entry.id}`;
+
+      const res = await apiFetch(url, { method: 'DELETE' });
+      if (!res || !res.ok) {
+        const data = await res?.json();
+        throw new Error(data?.error || 'Delete failed');
+      }
+
+      showToast('Deleted successfully!');
+      setDeleteTarget(null);
+
+      fetchSummary();
+      fetchHistory();
+    } catch (err) {
+      showToast(err?.message || 'Delete failed', 'error');
+    } finally {
+      setDeleteSaving(false);
+    }
+  };
 
   // ── Add expense ───────────────────────────────────────────
   const handleAddExpense = async () => {
@@ -120,7 +173,6 @@ export default function TodaySummary() {
         });
       }
 
-      // Use apiFetch so token is included
       const res = await apiFetch(`/api/summary/range?from=${pdfFrom}&to=${pdfTo}`);
       if (!res || !res.ok) throw new Error('Server error: ' + (res?.status || 'unknown'));
       const text = await res.text();
@@ -385,6 +437,12 @@ export default function TodaySummary() {
                         <div className="text-right">
                           <p className="font-black text-emerald-600 text-lg">Rs.{Number(entry.amount).toLocaleString('en-IN')}</p>
                           <p className="text-xs text-text-secondary">{totalQty} bags total</p>
+                          {isAdmin && (
+                            <div className="mt-2 flex gap-2 justify-end">
+                              <button onClick={() => openEdit('cash', entry)} className="p-1.5 hover:bg-white rounded transition-colors text-sm" title="Edit">✏️</button>
+                              <button onClick={() => setDeleteTarget({ type: 'cash', entry })} className="p-1.5 hover:bg-white rounded transition-colors text-sm" title="Delete">🗑️</button>
+                            </div>
+                          )}
                         </div>
                       </div>
                       {bags.length > 0 && (
@@ -421,7 +479,15 @@ export default function TodaySummary() {
                       <p className="text-xs text-text-secondary mt-0.5">📅 {fmtDate(entry.date)}</p>
                       {entry.note && <p className="text-xs text-text-secondary mt-0.5">📝 {entry.note}</p>}
                     </div>
-                    <p className="font-black text-amber-600 text-xl">Rs.{Number(entry.amount).toLocaleString('en-IN')}</p>
+                    <div className="flex flex-col items-end gap-2">
+                      <p className="font-black text-amber-600 text-xl">Rs.{Number(entry.amount).toLocaleString('en-IN')}</p>
+                      {isAdmin && (
+                        <div className="flex gap-2">
+                          <button onClick={() => openEdit('credit', entry)} className="p-1.5 hover:bg-white rounded transition-colors text-sm" title="Edit">✏️</button>
+                          <button onClick={() => setDeleteTarget({ type: 'credit', entry })} className="p-1.5 hover:bg-white rounded transition-colors text-sm" title="Delete">🗑️</button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -454,6 +520,12 @@ export default function TodaySummary() {
                         <div className="text-right">
                           <p className="font-black text-red-600 text-lg">Rs.{Number(entry.amount).toLocaleString('en-IN')}</p>
                           <p className="text-xs text-text-secondary">{totalQty} bags total</p>
+                          {isAdmin && (
+                            <div className="mt-2 flex gap-2 justify-end">
+                              <button onClick={() => openEdit('debit', entry)} className="p-1.5 hover:bg-white rounded transition-colors text-sm" title="Edit">✏️</button>
+                              <button onClick={() => setDeleteTarget({ type: 'debit', entry })} className="p-1.5 hover:bg-white rounded transition-colors text-sm" title="Delete">🗑️</button>
+                            </div>
+                          )}
                         </div>
                       </div>
                       {bags.length > 0 && (
@@ -476,56 +548,34 @@ export default function TodaySummary() {
         </DetailModal>
       )}
 
-      {activeModal === 'combined' && (
-        <DetailModal title="Combined Revenue — All Entries" icon="📈" onClose={() => setActiveModal(null)}>
-          {cashEntries.length === 0 && creditEntries.length === 0 ? (
-            <div className="text-center py-12"><div className="text-4xl mb-2">📈</div><p className="text-text-secondary font-medium">No revenue entries today</p></div>
-          ) : (
-            <>
-              {cashEntries.length > 0 && (
-                <div className="mb-5">
-                  <h3 className="text-sm font-black text-emerald-700 bg-emerald-50 px-3 py-2 rounded-xl mb-3 flex justify-between"><span>💰 Cash Sales</span><span>Rs.{(summary?.totalCash||0).toLocaleString('en-IN')}</span></h3>
-                  <div className="space-y-2">
-                    {cashEntries.map((entry, i) => {
-                      const bags = Array.isArray(entry.bags) ? entry.bags : [];
-                      const totalQty = bags.reduce((s,b) => s+(Number(b.numberOfBags)||0), 0);
-                      return (
-                        <div key={entry.id||i} className="flex justify-between items-center bg-green-50 border border-green-100 rounded-xl px-4 py-3">
-                          <div>
-                            <p className="font-bold text-sm text-primary-dark">👤 {entry.customer_name||'CASH CUSTOMER'}</p>
-                            <p className="text-xs text-text-secondary">📅 {fmtDate(entry.date)} · 📦 {totalQty} bags</p>
-                            {bags.length > 0 && <p className="text-xs text-text-secondary mt-0.5">{bags.map(b=>`${b.bagName} x${b.numberOfBags}`).join(', ')}</p>}
-                          </div>
-                          <p className="font-black text-emerald-600">Rs.{Number(entry.amount).toLocaleString('en-IN')}</p>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-              {creditEntries.length > 0 && (
-                <div className="mb-5">
-                  <h3 className="text-sm font-black text-amber-700 bg-amber-50 px-3 py-2 rounded-xl mb-3 flex justify-between"><span>📥 Credit Received</span><span>Rs.{(summary?.totalCredit||0).toLocaleString('en-IN')}</span></h3>
-                  <div className="space-y-2">
-                    {creditEntries.map((entry, i) => (
-                      <div key={entry.id||i} className="flex justify-between items-center bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
-                        <div>
-                          <p className="font-bold text-sm text-primary-dark">👤 {entry.customer_name||'-'}</p>
-                          <p className="text-xs text-text-secondary">📅 {fmtDate(entry.date)}{entry.note ? ` · ${entry.note}` : ''}</p>
-                        </div>
-                        <p className="font-black text-amber-600">Rs.{Number(entry.amount).toLocaleString('en-IN')}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div className="mt-2 p-4 bg-indigo-600 text-white rounded-xl flex justify-between items-center">
-                <span className="font-bold">Combined Revenue (Cash + Credit)</span>
-                <span className="text-xl font-black">Rs.{((summary?.totalCash||0)+(summary?.totalCredit||0)).toLocaleString('en-IN')}</span>
-              </div>
-            </>
-          )}
-        </DetailModal>
+      {/* Edit Modal */}
+      {isAdmin && editTarget && (
+        <EditTransactionModal
+          type={editTarget.type}
+          entry={editTarget.entry}
+          onSave={onEditSave}
+          onCancel={() => setEditTarget(null)}
+        />
+      )}
+
+      {/* Delete Confirmation */}
+      {isAdmin && deleteTarget && (
+        <ConfirmModal
+          title={`Delete ${deleteTarget.type.replace('-', ' ')}?`}
+          confirmText="Yes, Delete Permanently"
+          loading={deleteSaving}
+          onConfirm={handleDeleteConfirm}
+          onCancel={() => setDeleteTarget(null)}
+        >
+          <div className="space-y-3">
+            <p className="text-sm text-text-secondary font-medium italic">Warning: This will permanently remove the record and re-adjust the balances.</p>
+            <div className="p-4 bg-red-50 rounded-xl border border-red-100">
+              <p className="text-sm"><strong>Type:</strong> <span className="capitalize">{deleteTarget.type}</span></p>
+              <p className="text-sm"><strong>Amount:</strong> ₹{Number(deleteTarget.entry.amount).toLocaleString('en-IN')}</p>
+              <p className="text-sm"><strong>Date:</strong> {fmtDate(deleteTarget.entry.date)}</p>
+            </div>
+          </div>
+        </ConfirmModal>
       )}
 
       {/* ── PDF MODAL ─────────────────────────────────────── */}
@@ -567,14 +617,6 @@ export default function TodaySummary() {
                   ))}
                 </div>
               </div>
-              {pdfFrom && pdfTo && (
-                <div className="bg-green-50 border-2 border-primary/20 rounded-xl p-3 mb-5 text-center">
-                  <p className="text-xs text-text-secondary mb-0.5">Report from</p>
-                  <p className="text-sm font-black text-primary-dark">
-                    {new Date(pdfFrom+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})} → {new Date(pdfTo+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
-                  </p>
-                </div>
-              )}
               <div className="flex gap-3">
                 <button onClick={()=>setShowPdfModal(false)} className="flex-1 py-3 border-2 border-border text-text-secondary font-bold rounded-xl hover:bg-bg transition-colors">Cancel</button>
                 <button onClick={handleGeneratePdf} disabled={!pdfFrom||!pdfTo}
@@ -637,7 +679,15 @@ export default function TodaySummary() {
               {todayExpenses.map((exp,i) => (
                 <div key={exp.id||i} className="flex justify-between items-center py-2 px-3 bg-bg rounded-xl">
                   <span className="text-sm font-medium text-text">{exp.category||exp.note||'Expense'}</span>
-                  <span className="text-sm font-bold text-danger">-Rs.{Number(exp.amount).toLocaleString('en-IN')}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-bold text-danger">-Rs.{Number(exp.amount).toLocaleString('en-IN')}</span>
+                    {isAdmin && (
+                      <div className="flex gap-2">
+                        <button onClick={() => openEdit('expenses', exp)} className="p-1.5 hover:bg-white rounded transition-colors text-sm" title="Edit">✏️</button>
+                        <button onClick={() => setDeleteTarget({ type: 'expenses', entry: exp })} className="p-1.5 hover:bg-white rounded transition-colors text-sm" title="Delete">🗑️</button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

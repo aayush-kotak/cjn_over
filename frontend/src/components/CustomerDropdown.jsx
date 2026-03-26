@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { apiFetch } from '../utils/api';
 
 // Fallback list in case API fails
 const PRESET_CUSTOMERS = [
@@ -45,8 +46,8 @@ export default function CustomerDropdown({ value, onChange }) {
 
   const fetchCustomers = async () => {
     try {
-      const res = await fetch('/api/customers');
-      if (!res.ok) throw new Error('Failed');
+      const res = await apiFetch('/api/customers');
+      if (!res || !res.ok) throw new Error('Failed');
       const data = await res.json();
       if (data && data.length > 0) {
         setCustomers(data.map(c => c.name));
@@ -64,17 +65,18 @@ export default function CustomerDropdown({ value, onChange }) {
     try {
       await Promise.all(
         PRESET_CUSTOMERS.map(name =>
-          fetch('/api/customers', {
+          apiFetch('/api/customers', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name })
           })
         )
       );
       // Reload after seeding
-      const res = await fetch('/api/customers');
-      const data = await res.json();
-      if (data && data.length > 0) setCustomers(data.map(c => c.name));
+      const res = await apiFetch('/api/customers');
+      if (res && res.ok) {
+        const data = await res.json();
+        if (data && data.length > 0) setCustomers(data.map(c => c.name));
+      }
     } catch {
       // Keep using PRESET_CUSTOMERS
     }
@@ -119,13 +121,14 @@ export default function CustomerDropdown({ value, onChange }) {
     setSaving(true);
     setAddError('');
     try {
-      const res = await fetch('/api/customers', {
+      const res = await apiFetch('/api/customers', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: trimmed })
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed');
+      if (!res || !res.ok) {
+        const data = await res?.json();
+        throw new Error(data?.error || 'Failed');
+      }
 
       // Add to local list and auto-select
       setCustomers(prev => [...prev, trimmed].sort());

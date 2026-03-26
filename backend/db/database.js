@@ -500,6 +500,45 @@ db.exec(`
     note       TEXT,
     created_at TEXT DEFAULT (datetime('now','localtime'))
   );
+
+  CREATE TABLE IF NOT EXISTS audit_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    action          TEXT NOT NULL, /* create|update|delete */
+    entity_type     TEXT NOT NULL, /* cash-sale|debit-sale|credit|expenses|customers */
+    entity_id       TEXT,
+    actor_username  TEXT,
+    actor_role      TEXT,
+    before_json     TEXT,
+    after_json      TEXT,
+    created_at      TEXT DEFAULT (datetime('now','localtime'))
+  );
+
+  -- Product master (bag/rate catalog)
+  CREATE TABLE IF NOT EXISTS products (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    name                TEXT NOT NULL UNIQUE,
+    rate_per_bag        REAL DEFAULT 0,
+    size                TEXT,
+    sku                 TEXT,
+    low_stock_threshold REAL DEFAULT 0,
+    created_at          TEXT DEFAULT (datetime('now','localtime'))
+  );
+
+  -- Stock movement ledger. Current stock is derived from movements.
+  CREATE TABLE IF NOT EXISTS stock_movements (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id         INTEGER NOT NULL,
+    movement_type      TEXT NOT NULL, /* in|out|adjust */
+    quantity_bags      REAL NOT NULL,
+    note                TEXT,
+
+    -- Source linkage for reconciliation (edit/delete)
+    source_entity_type TEXT,
+    source_entity_id   TEXT,
+    source_bag_index   INTEGER,
+
+    created_at          TEXT DEFAULT (datetime('now','localtime'))
+  );
 `);
 
 // ── Add bags column if missing in existing databases ──────────
@@ -583,6 +622,10 @@ function insertCashEntry(date, customerName, amount, bags, note) {
   const info = db.prepare(
     'INSERT INTO daily_cash_entries (date, customer_id, customer_name, bags, amount, note) VALUES (?, ?, ?, ?, ?, ?)'
   ).run(date, customer.id, customerName, bagsJson, Number(amount), note || '');
+
+  // Deduct stock for each bag line inside the cash sale.
+  reconcileStockForSaleEntry('cash-sale', info.lastInsertRowid, bags);
+
   updateDailySummary(date);
   return info;
 }
@@ -594,6 +637,10 @@ function insertDebitEntry(date, customerName, amount, bags, note) {
   const info = db.prepare(
     'INSERT INTO daily_debit_entries (date, customer_id, customer_name, bags, amount, note) VALUES (?, ?, ?, ?, ?, ?)'
   ).run(date, customer.id, customerName, bagsJson, Number(amount), note || '');
+
+  // Deduct stock for each bag line inside the debit sale.
+  reconcileStockForSaleEntry('debit-sale', info.lastInsertRowid, bags);
+
   // Add to customer ledger
   insertLedgerEntry(customerName, date, 'debit', Number(amount), note || '');
   updateDailySummary(date);
@@ -619,6 +666,90 @@ function insertExpense(date, amount, category, note) {
   ).run(date, Number(amount), category || '', note || '');
   updateDailySummary(date);
   return info;
+}
+
+// ── Read single entries (by id) ─────────────────────────────
+function getCashEntryById(id) {
+  const row = db.prepare('SELECT * FROM daily_cash_entries WHERE id=?').get(id);
+  if (!row) return null;
+  return {
+    ...row,
+    bags: row.bags ? (() => { try { return JSON.parse(row.bags); } catch { return []; } })() : []
+  };
+}
+
+function getDebitEntryById(id) {
+  const row = db.prepare('SELECT * FROM daily_debit_entries WHERE id=?').get(id);
+  if (!row) return null;
+  return {
+    ...row,
+    bags: row.bags ? (() => { try { return JSON.parse(row.bags); } catch { return []; } })() : []
+  };
+}
+
+function getCreditEntryById(id) {
+  const row = db.prepare('SELECT * FROM daily_credit_entries WHERE id=?').get(id);
+  return row || null;
+}
+
+function getExpenseById(id) {
+  const row = db.prepare('SELECT * FROM expenses WHERE id=?').get(id);
+  return row || null;
+}
+
+// ── Update entries (edit-in-place) ──────────────────────────
+function updateCashEntryById(id, { date, customerName, amount, bags, note }) {
+  const customer = getOrCreateCustomer(customerName);
+  const bagsJson = bags ? (typeof bags === 'string' ? bags : JSON.stringify(bags)) : '[]';
+  return db.prepare(`
+    UPDATE daily_cash_entries
+    SET date=?, customer_id=?, customer_name=?, bags=?, amount=?, note=?
+    WHERE id=?
+  `).run(date, customer.id, customerName, bagsJson, Number(amount), note || '', id);
+}
+
+function updateDebitEntryById(id, { date, customerName, amount, bags, note }) {
+  const customer = getOrCreateCustomer(customerName);
+  const bagsJson = bags ? (typeof bags === 'string' ? bags : JSON.stringify(bags)) : '[]';
+  return db.prepare(`
+    UPDATE daily_debit_entries
+    SET date=?, customer_id=?, customer_name=?, bags=?, amount=?, note=?
+    WHERE id=?
+  `).run(date, customer.id, customerName, bagsJson, Number(amount), note || '', id);
+}
+
+function updateCreditEntryById(id, { date, customerName, amount, note }) {
+  const customer = getOrCreateCustomer(customerName);
+  return db.prepare(`
+    UPDATE daily_credit_entries
+    SET date=?, customer_id=?, customer_name=?, amount=?, note=?
+    WHERE id=?
+  `).run(date, customer.id, customerName, Number(amount), note || '', id);
+}
+
+function updateExpenseById(id, { date, amount, category, note }) {
+  return db.prepare(`
+    UPDATE expenses
+    SET date=?, amount=?, category=?, note=?
+    WHERE id=?
+  `).run(date, Number(amount), category || '', note || '', id);
+}
+
+// ── Delete entries (hard delete) ─────────────────────────────
+function deleteCashEntryById(id) {
+  return db.prepare('DELETE FROM daily_cash_entries WHERE id=?').run(id);
+}
+
+function deleteDebitEntryById(id) {
+  return db.prepare('DELETE FROM daily_debit_entries WHERE id=?').run(id);
+}
+
+function deleteCreditEntryById(id) {
+  return db.prepare('DELETE FROM daily_credit_entries WHERE id=?').run(id);
+}
+
+function deleteExpenseById(id) {
+  return db.prepare('DELETE FROM expenses WHERE id=?').run(id);
 }
 
 // ── getCashEntries ────────────────────────────────────────────
@@ -696,16 +827,260 @@ function getCustomerBalance(customerName) {
   } catch(e) { return 0; }
 }
 
+// ── Audit log ───────────────────────────────────────────────
+function logAudit({ action, entityType, entityId, actorUsername, actorRole, before, after }) {
+  db.prepare(`
+    INSERT INTO audit_log (action, entity_type, entity_id, actor_username, actor_role, before_json, after_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    action,
+    entityType,
+    entityId ?? null,
+    actorUsername ?? null,
+    actorRole ?? null,
+    before == null ? null : JSON.stringify(before),
+    after == null ? null : JSON.stringify(after)
+  );
+}
+
+// Rebuild ledger for a customer from debit+credit tables.
+// Keeps ledgers correct after edit/delete operations.
+function rebuildCustomerLedger(customerName) {
+  const trimmed = (customerName || '').trim();
+  if (!trimmed) return;
+
+  const tableName = ensureCustomerLedgerTable(trimmed);
+  db.prepare(`DELETE FROM "${tableName}"`).run();
+
+  // Deterministic order: date then id.
+  const rows = db.prepare(`
+    SELECT date, id, amount, note, 'debit' AS entry_type
+    FROM daily_debit_entries
+    WHERE customer_name = ?
+    UNION ALL
+    SELECT date, id, amount, note, 'credit' AS entry_type
+    FROM daily_credit_entries
+    WHERE customer_name = ?
+    ORDER BY date ASC, id ASC
+  `).all(trimmed, trimmed);
+
+  let running = 0;
+  const insert = db.prepare(`
+    INSERT INTO "${tableName}" (date, entry_type, amount, note, running_balance)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+
+  rows.forEach((r) => {
+    const amt = Number(r.amount) || 0;
+    if (r.entry_type === 'debit') running += amt;
+    if (r.entry_type === 'credit') running -= amt;
+    insert.run(r.date, r.entry_type, amt, r.note || '', running);
+  });
+}
+
+// ── Products + Stock ─────────────────────────────────────────
+function getProductByName(name) {
+  const trimmed = (name || '').trim();
+  if (!trimmed) return null;
+  return db.prepare('SELECT * FROM products WHERE name=?').get(trimmed);
+}
+
+function getProductById(productId) {
+  const idNum = Number(productId);
+  if (!Number.isFinite(idNum) || idNum <= 0) return null;
+  return db.prepare('SELECT * FROM products WHERE id=?').get(idNum);
+}
+
+function createProduct({ name, ratePerBag, size, sku, lowStockThreshold }) {
+  const trimmed = (name || '').trim();
+  if (!trimmed) throw new Error('Product name required');
+
+  const rate = Number(ratePerBag) || 0;
+  const threshold = Number(lowStockThreshold) || 0;
+
+  db.prepare(`
+    INSERT OR IGNORE INTO products (name, rate_per_bag, size, sku, low_stock_threshold)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(trimmed, rate, size || '', sku || '', threshold);
+
+  const product = getProductByName(trimmed);
+  if (!product) throw new Error('Failed to create product');
+  return product;
+}
+
+function getOrCreateProductByBagLine({ bagName, ratePerBag }) {
+  const name = (bagName || '').trim();
+  if (!name) throw new Error('Bag name required for stock tracking');
+
+  const existing = getProductByName(name);
+  if (existing) return existing;
+
+  // Auto-create unknown products so stock tracking still works.
+  return createProduct({
+    name,
+    ratePerBag: ratePerBag ?? 0,
+    size: '',
+    sku: '',
+    lowStockThreshold: 0
+  });
+}
+
+function deleteStockMovementsForSource(sourceEntityType, sourceEntityId) {
+  db.prepare(`
+    DELETE FROM stock_movements
+    WHERE source_entity_type=? AND source_entity_id=?
+  `).run(sourceEntityType, String(sourceEntityId));
+}
+
+function reconcileStockForSaleEntry(sourceEntityType, sourceEntityId, bags) {
+  // For sales-like entries (cash + debit), deduct stock by bag lines.
+  deleteStockMovementsForSource(sourceEntityType, sourceEntityId);
+
+  const bagArray = Array.isArray(bags) ? bags : [];
+  if (bagArray.length === 0) return;
+
+  const insertMove = db.prepare(`
+    INSERT INTO stock_movements
+      (product_id, movement_type, quantity_bags, note, source_entity_type, source_entity_id, source_bag_index)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  bagArray.forEach((b, idx) => {
+    const bagName = (b?.bagName || '').trim();
+    const qty = Number(b?.numberOfBags) || 0;
+    const rate = Number(b?.pricePerBag) || 0;
+    if (!bagName || qty <= 0) return;
+
+    const product = getOrCreateProductByBagLine({ bagName, ratePerBag: rate });
+
+    insertMove.run(
+      product.id,
+      'out',
+      qty,
+      '',
+      sourceEntityType,
+      String(sourceEntityId),
+      idx
+    );
+  });
+}
+
+function getStockForProduct(productId) {
+  const product = getProductById(productId);
+  if (!product) return 0;
+
+  const sums = db.prepare(`
+    SELECT
+      COALESCE(SUM(CASE WHEN movement_type='in' THEN quantity_bags ELSE 0 END),0)  AS in_qty,
+      COALESCE(SUM(CASE WHEN movement_type='out' THEN quantity_bags ELSE 0 END),0) AS out_qty
+    FROM stock_movements
+    WHERE product_id=?
+  `).get(product.id);
+
+  return Number(sums?.in_qty || 0) - Number(sums?.out_qty || 0);
+}
+
+function getAllProducts() {
+  return db.prepare('SELECT * FROM products ORDER BY name ASC').all();
+}
+
+function listLowStockProducts() {
+  return db.prepare(`
+    SELECT p.*,
+      (COALESCE(SUM(CASE WHEN sm.movement_type='in' THEN sm.quantity_bags ELSE 0 END),0) -
+       COALESCE(SUM(CASE WHEN sm.movement_type='out' THEN sm.quantity_bags ELSE 0 END),0)
+      ) AS current_stock
+    FROM products p
+    LEFT JOIN stock_movements sm ON sm.product_id = p.id
+    GROUP BY p.id
+    HAVING p.low_stock_threshold > 0 AND current_stock <= p.low_stock_threshold
+    ORDER BY current_stock ASC
+  `).all();
+}
+
+function addStockMovement({ productId, movementType, quantityBags, note, sourceEntityType, sourceEntityId, sourceBagIndex }) {
+  const product = getProductById(productId);
+  if (!product) throw new Error('Product not found');
+
+  const movement = String(movementType || '').trim();
+  const qty = Number(quantityBags) || 0;
+  if (!['in', 'out', 'adjust'].includes(movement)) throw new Error('Invalid movement_type');
+  if (qty <= 0) throw new Error('Quantity must be > 0');
+
+  db.prepare(`
+    INSERT INTO stock_movements
+      (product_id, movement_type, quantity_bags, note, source_entity_type, source_entity_id, source_bag_index)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    product.id,
+    movement,
+    qty,
+    note || '',
+    sourceEntityType || null,
+    sourceEntityId || null,
+    sourceBagIndex == null ? null : Number(sourceBagIndex)
+  );
+
+  return true;
+}
+
+// ── One-time backfill for existing data ─────────────────────────────
+// If stock_movements is empty, rebuild it from existing cash+debit entries
+// so the inventory view starts accurate after upgrade.
+try {
+  const cntRow = db.prepare('SELECT COUNT(*) as cnt FROM stock_movements').get();
+  const cnt = Number(cntRow?.cnt || 0);
+  if (cnt === 0) {
+    const cashEntries  = db.prepare('SELECT id, bags FROM daily_cash_entries').all();
+    const debitEntries = db.prepare('SELECT id, bags FROM daily_debit_entries').all();
+
+    cashEntries.forEach((e) => {
+      let bags = [];
+      try { bags = e.bags ? JSON.parse(e.bags) : []; } catch { bags = []; }
+      reconcileStockForSaleEntry('cash-sale', e.id, bags);
+    });
+    debitEntries.forEach((e) => {
+      let bags = [];
+      try { bags = e.bags ? JSON.parse(e.bags) : []; } catch { bags = []; }
+      reconcileStockForSaleEntry('debit-sale', e.id, bags);
+    });
+  }
+} catch (err) {
+  console.log('Stock backfill:', err.message);
+}
+
 module.exports = {
   getOrCreateCustomer,
   getAllCustomers,
   getAllCustomersSummary,
   getCustomerLedger,
   getCustomerBalance,
+  logAudit,
+  rebuildCustomerLedger,
+  // Products + stock
+  createProduct,
+  getAllProducts,
+  listLowStockProducts,
+  getStockForProduct,
+  reconcileStockForSaleEntry,
+  deleteStockMovementsForSource,
+  addStockMovement,
   insertCashEntry,
   insertDebitEntry,
   insertCreditEntry,
   insertExpense,
+  getCashEntryById,
+  getDebitEntryById,
+  getCreditEntryById,
+  getExpenseById,
+  updateCashEntryById,
+  updateDebitEntryById,
+  updateCreditEntryById,
+  updateExpenseById,
+  deleteCashEntryById,
+  deleteDebitEntryById,
+  deleteCreditEntryById,
+  deleteExpenseById,
   getCashEntries,
   getDebitEntries,
   getCreditEntries,

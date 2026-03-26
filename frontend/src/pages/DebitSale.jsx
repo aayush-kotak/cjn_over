@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import CustomerDropdown from '../components/CustomerDropdown';
 import ConfirmModal from '../components/ConfirmModal';
 import { showToast } from '../components/Toast';
 import { apiFetch } from '../utils/api';
 
-const emptyBag = () => ({ bagName: '', numberOfBags: '', pricePerBag: '' });
+const emptyBag = () => ({ productId: '', bagName: '', numberOfBags: '', pricePerBag: '' });
 
 export default function DebitSale() {
   const navigate = useNavigate();
@@ -13,6 +13,7 @@ export default function DebitSale() {
   const [bags, setBags]                 = useState([emptyBag()]);
   const [showModal, setShowModal]       = useState(false);
   const [loading, setLoading]           = useState(false);
+  const [products, setProducts]        = useState([]);
 
   const todayDisplay = new Date().toLocaleDateString('en-IN', { day:'2-digit', month:'2-digit', year:'numeric' });
   const todayISO     = new Date().toISOString().slice(0, 10);
@@ -20,6 +21,7 @@ export default function DebitSale() {
   const updateBag = (index, field, value) => {
     const updated = [...bags];
     updated[index] = { ...updated[index], [field]: value };
+    if (field === 'bagName') updated[index].productId = '';
     setBags(updated);
   };
 
@@ -29,6 +31,32 @@ export default function DebitSale() {
   const getSubtotal = (bag) => (Number(bag.numberOfBags) || 0) * (Number(bag.pricePerBag) || 0);
   const grandTotal  = bags.reduce((sum, bag) => sum + getSubtotal(bag), 0);
   const isValid     = customerName.trim() && bags.every(b => b.bagName.trim() && Number(b.numberOfBags) > 0 && Number(b.pricePerBag) > 0);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch('/api/products')
+      .then(res => res.json())
+      .then(data => {
+        if (cancelled) return;
+        if (Array.isArray(data)) setProducts(data);
+      })
+      .catch(() => {
+        if (!cancelled) setProducts([]);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handlePickProduct = (index, productId) => {
+    const pid = String(productId || '');
+    const product = products.find(p => String(p.id) === pid);
+    if (!product) {
+      updateBag(index, 'productId', '');
+      return;
+    }
+    updateBag(index, 'productId', pid);
+    updateBag(index, 'bagName', product.name);
+    updateBag(index, 'pricePerBag', product.rate_per_bag ?? '');
+  };
 
   const handlePreview = () => {
     if (!isValid) { showToast('Please fill customer name and all bag details', 'error'); return; }
@@ -101,9 +129,28 @@ export default function DebitSale() {
             </div>
             <div className="grid sm:grid-cols-3 gap-4">
               <div>
-                <label className="block text-sm font-semibold text-primary-dark mb-1.5">Bag Name <span className="text-danger">*</span></label>
-                <input type="text" value={bag.bagName} onChange={e => updateBag(index, 'bagName', e.target.value)} placeholder="Enter bag name"
-                  className="w-full px-4 py-3 rounded-xl border-2 border-border bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all text-sm font-medium" />
+                <label className="block text-sm font-semibold text-primary-dark mb-1.5">Product (optional)</label>
+                <select
+                  value={bag.productId || ''}
+                  onChange={e => handlePickProduct(index, e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border-2 border-border bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all text-sm font-medium"
+                >
+                  <option value="">Custom (type bag name)</option>
+                  {products.map(p => (
+                    <option key={p.id} value={String(p.id)}>{p.name}</option>
+                  ))}
+                </select>
+
+                <label className="block text-sm font-semibold text-primary-dark mt-3 mb-1.5">
+                  Bag Name <span className="text-danger">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={bag.bagName}
+                  onChange={e => updateBag(index, 'bagName', e.target.value)}
+                  placeholder="Enter bag name"
+                  className="w-full px-4 py-3 rounded-xl border-2 border-border bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all text-sm font-medium"
+                />
               </div>
               <div>
                 <label className="block text-sm font-semibold text-primary-dark mb-1.5">No. of Bags <span className="text-danger">*</span></label>
