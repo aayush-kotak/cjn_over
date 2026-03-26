@@ -3,6 +3,7 @@ const router = express.Router();
 
 const {
   getAllProducts,
+  getProductByName,
   createProduct,
   addStockMovement,
   getStockForProduct,
@@ -37,27 +38,27 @@ const STOCK_CATALOG = {
 };
 
 // ── GET /api/stock-management/catalog ─────────────────────────
-// Returns the fixed catalog with current stock for each item
-router.get('/catalog', (req, res) => {
+router.get('/catalog', async (req, res) => {
   try {
     if (!requireAdmin(req, res)) return;
 
-    const allProducts = getAllProducts();
+    const allProducts = await getAllProducts();
     const productMap = {};
     allProducts.forEach(p => { productMap[p.name] = p; });
 
     const result = {};
     for (const [category, items] of Object.entries(STOCK_CATALOG)) {
-      result[category] = items.map(name => {
+      result[category] = [];
+      for (const name of items) {
         const product = productMap[name];
-        const currentStock = product ? getStockForProduct(product.id) : 0;
-        return {
+        const currentStock = product ? await getStockForProduct(product.id) : 0;
+        result[category].push({
           name,
           productId: product ? product.id : null,
           currentStock,
           ratePerBag: product ? product.rate_per_bag : 0
-        };
-      });
+        });
+      }
     }
 
     res.json(result);
@@ -67,24 +68,23 @@ router.get('/catalog', (req, res) => {
 });
 
 // ── GET /api/stock-management/history ─────────────────────────
-// Returns stock movement history for all products, with date filtering
-router.get('/history', (req, res) => {
+router.get('/history', async (req, res) => {
   try {
     if (!requireAdmin(req, res)) return;
 
-    const allProducts = getAllProducts();
+    const allProducts = await getAllProducts();
     const productMap = {};
     allProducts.forEach(p => { productMap[p.id] = p; });
 
     const { date, productId } = req.query;
-    const rows = getStockMovements({ date: date || undefined, productId: productId || undefined });
+    const rows = await getStockMovements({ date: date || undefined, productId: productId || undefined });
 
     const history = rows.map(r => ({
       id: r.id,
-      productId: r.product_id,
+      productId: Number(r.product_id),
       productName: productMap[r.product_id]?.name || 'Unknown',
       movementType: r.movement_type,
-      quantityBags: r.quantity_bags,
+      quantityBags: Number(r.quantity_bags),
       note: r.note,
       sourceEntityType: r.source_entity_type,
       sourceEntityId: r.source_entity_id,
@@ -98,14 +98,11 @@ router.get('/history', (req, res) => {
 });
 
 // ── POST /api/stock-management/import ─────────────────────────
-// Add stock (bags imported) for one or more items
-router.post('/import', (req, res) => {
+router.post('/import', async (req, res) => {
   try {
     if (!requireAdmin(req, res)) return;
 
     const { items, date } = req.body;
-    // items: [{ name: 'Madhav', quantity: 200, note: '' }, ...]
-
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'No items provided' });
     }
@@ -116,32 +113,27 @@ router.post('/import', (req, res) => {
       const qty = Number(item.quantity) || 0;
       if (!name || qty <= 0) continue;
 
-      // Ensure product exists
-      let product;
-      try {
-        product = createProduct({
+      let product = await getProductByName(name);
+      if (!product) {
+        product = await createProduct({
           name,
           ratePerBag: 0,
           size: '',
           sku: '',
           lowStockThreshold: 0
         });
-      } catch (e) {
-        // Product already exists — get it
-        const allProd = getAllProducts();
-        product = allProd.find(p => p.name === name);
       }
 
       if (!product) continue;
 
-      addStockMovement({
+      await addStockMovement({
         productId: product.id,
         movementType: 'in',
         quantityBags: qty,
         note: item.note || `Stock import on ${date || new Date().toISOString().slice(0, 10)}`
       });
 
-      logAudit({
+      await logAudit({
         action: 'create',
         entityType: 'stock-import',
         entityId: String(product.id),
@@ -155,7 +147,7 @@ router.post('/import', (req, res) => {
         name,
         productId: product.id,
         quantityAdded: qty,
-        newStock: getStockForProduct(product.id)
+        newStock: await getStockForProduct(product.id)
       });
     }
 
@@ -166,24 +158,24 @@ router.post('/import', (req, res) => {
 });
 
 // ── POST /api/stock-management/seed ───────────────────────────
-// Ensure all catalog items exist as products (run once)
-router.post('/seed', (req, res) => {
+router.post('/seed', async (req, res) => {
   try {
     if (!requireAdmin(req, res)) return;
 
     const created = [];
     for (const [category, items] of Object.entries(STOCK_CATALOG)) {
       for (const name of items) {
-        try {
-          const product = createProduct({
+        let product = await getProductByName(name);
+        if (!product) {
+          product = await createProduct({
             name,
             ratePerBag: 0,
             size: '',
             sku: '',
             lowStockThreshold: 0
           });
-          created.push({ name, id: product.id, status: 'created' });
-        } catch (e) {
+          created.push({ name, id: product?.id, status: 'created' });
+        } else {
           created.push({ name, status: 'exists' });
         }
       }

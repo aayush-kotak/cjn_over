@@ -42,10 +42,9 @@ function requireAdmin(req, res) {
   return true;
 }
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const { date, customer_name, bags, grandTotal, amount, note } = req.body;
-    const finalAmount   = Number(grandTotal) || Number(amount) || 0;
     const finalCustomer = (customer_name || 'CASH CUSTOMER').trim();
     const finalDate     = date || new Date().toISOString().slice(0, 10);
     const normalized = normalizeBags(bags || []);
@@ -55,7 +54,7 @@ router.post('/', (req, res) => {
     if (computedAmount <= 0) return res.status(400).json({ error: 'Amount must be > 0' });
 
     // ── Stock validation ──────────────────────────────────────
-    const stockCheck = validateStockForBags(finalBags);
+    const stockCheck = await validateStockForBags(finalBags);
     if (!stockCheck.valid) {
       const msgs = stockCheck.errors.map(e =>
         `"${e.bagName}" — need ${e.required} bags but only ${e.available} available`
@@ -67,14 +66,14 @@ router.post('/', (req, res) => {
       });
     }
 
-    const info = insertCashEntry(finalDate, finalCustomer, computedAmount, finalBags, note || '');
+    const info = await insertCashEntry(finalDate, finalCustomer, computedAmount, finalBags, note || '');
     const entryId = info.lastInsertRowid;
 
     // Trigger reconciliation
-    updateDailySummary(finalDate);
-    reconcileStockForSaleEntry('cash-sale', entryId, finalBags);
+    await updateDailySummary(finalDate);
+    await reconcileStockForSaleEntry('cash-sale', entryId, finalBags);
 
-    logAudit({
+    await logAudit({
       action: 'create',
       entityType: 'cash-sale',
       entityId: String(entryId),
@@ -91,22 +90,23 @@ router.post('/', (req, res) => {
   }
 });
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    res.json(getCashEntries(req.query.date || null));
+    const entries = await getCashEntries(req.query.date || null);
+    res.json(entries);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch' });
   }
 });
 
 // ── Admin edit cash entry ──────────────────────────────────
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     if (!requireAdmin(req, res)) return;
     const entryId = Number(req.params.id);
     if (!Number.isFinite(entryId) || entryId <= 0) return res.status(400).json({ error: 'Invalid id' });
 
-    const oldEntry = getCashEntryById(entryId);
+    const oldEntry = await getCashEntryById(entryId);
     if (!oldEntry) return res.status(404).json({ error: 'Entry not found' });
 
     const { date, customer_name, customerName, bags, note } = req.body;
@@ -120,7 +120,7 @@ router.put('/:id', (req, res) => {
     const finalAmount = calcAmountFromBags(finalBags);
     if (finalAmount <= 0) return res.status(400).json({ error: 'Amount must be > 0' });
 
-    updateCashEntryById(entryId, {
+    await updateCashEntryById(entryId, {
       date: finalDate,
       customerName: finalCustomer,
       amount: finalAmount,
@@ -128,14 +128,16 @@ router.put('/:id', (req, res) => {
       note: note || ''
     });
 
-    const updated = getCashEntryById(entryId);
+    const updated = await getCashEntryById(entryId);
     const affectedDates = Array.from(new Set([oldEntry.date, updated?.date].filter(Boolean)));
-    affectedDates.forEach(d => updateDailySummary(d));
+    for (const d of affectedDates) {
+      await updateDailySummary(d);
+    }
 
     // Reconcile stock movements for this edited cash sale.
-    reconcileStockForSaleEntry('cash-sale', entryId, updated?.bags || []);
+    await reconcileStockForSaleEntry('cash-sale', entryId, updated?.bags || []);
 
-    logAudit({
+    await logAudit({
       action: 'update',
       entityType: 'cash-sale',
       entityId: String(entryId),
@@ -153,22 +155,22 @@ router.put('/:id', (req, res) => {
 });
 
 // ── Admin delete cash entry ────────────────────────────────
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     if (!requireAdmin(req, res)) return;
     const entryId = Number(req.params.id);
     if (!Number.isFinite(entryId) || entryId <= 0) return res.status(400).json({ error: 'Invalid id' });
 
-    const oldEntry = getCashEntryById(entryId);
+    const oldEntry = await getCashEntryById(entryId);
     if (!oldEntry) return res.status(404).json({ error: 'Entry not found' });
 
-    deleteCashEntryById(entryId);
-    updateDailySummary(oldEntry.date);
+    await deleteCashEntryById(entryId);
+    await updateDailySummary(oldEntry.date);
 
     // Remove stock movements for this deleted cash sale.
-    deleteStockMovementsForSource('cash-sale', entryId);
+    await deleteStockMovementsForSource('cash-sale', entryId);
 
-    logAudit({
+    await logAudit({
       action: 'delete',
       entityType: 'cash-sale',
       entityId: String(entryId),

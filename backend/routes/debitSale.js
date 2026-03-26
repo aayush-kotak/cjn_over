@@ -30,7 +30,6 @@ function normalizeBags(bags) {
     const pricePerBag = Number(b?.pricePerBag) || 0;
     return { bagName, numberOfBags, pricePerBag };
   });
-
   const isValid = normalized.every(b => b.bagName && b.numberOfBags > 0 && b.pricePerBag > 0);
   if (!isValid) return { ok: false };
   return { ok: true, normalized };
@@ -44,7 +43,7 @@ function requireAdmin(req, res) {
   return true;
 }
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const { date, customer_name, customerName, bags, grandTotal, amount, note } = req.body;
     const finalCustomer = (customer_name || customerName || '').trim();
@@ -57,7 +56,7 @@ router.post('/', (req, res) => {
     if (computedAmount <= 0) return res.status(400).json({ error: 'Amount must be > 0' });
 
     // ── Stock validation ──────────────────────────────────────
-    const stockCheck = validateStockForBags(finalBags);
+    const stockCheck = await validateStockForBags(finalBags);
     if (!stockCheck.valid) {
       const msgs = stockCheck.errors.map(e =>
         `"${e.bagName}" — need ${e.required} bags but only ${e.available} available`
@@ -69,15 +68,15 @@ router.post('/', (req, res) => {
       });
     }
 
-    const info = insertDebitEntry(finalDate, finalCustomer, computedAmount, finalBags, note || '');
+    const info = await insertDebitEntry(finalDate, finalCustomer, computedAmount, finalBags, note || '');
     const entryId = info.lastInsertRowid;
 
     // Trigger reconciliation
-    updateDailySummary(finalDate);
-    rebuildCustomerLedger(finalCustomer);
-    reconcileStockForSaleEntry('debit-sale', entryId, finalBags);
+    await updateDailySummary(finalDate);
+    await rebuildCustomerLedger(finalCustomer);
+    await reconcileStockForSaleEntry('debit-sale', entryId, finalBags);
 
-    logAudit({
+    await logAudit({
       action: 'create',
       entityType: 'debit-sale',
       entityId: String(entryId),
@@ -94,22 +93,23 @@ router.post('/', (req, res) => {
   }
 });
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    res.json(getDebitEntries(req.query.date || null));
+    const entries = await getDebitEntries(req.query.date || null);
+    res.json(entries);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch' });
   }
 });
 
 // ── Admin edit debit entry ─────────────────────────────────
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     if (!requireAdmin(req, res)) return;
     const entryId = Number(req.params.id);
     if (!Number.isFinite(entryId) || entryId <= 0) return res.status(400).json({ error: 'Invalid id' });
 
-    const oldEntry = getDebitEntryById(entryId);
+    const oldEntry = await getDebitEntryById(entryId);
     if (!oldEntry) return res.status(404).json({ error: 'Entry not found' });
 
     const { date, customer_name, customerName, bags, note } = req.body;
@@ -124,7 +124,7 @@ router.put('/:id', (req, res) => {
     const finalAmount = calcAmountFromBags(finalBags);
     if (finalAmount <= 0) return res.status(400).json({ error: 'Amount must be > 0' });
 
-    updateDebitEntryById(entryId, {
+    await updateDebitEntryById(entryId, {
       date: finalDate,
       customerName: finalCustomer,
       amount: finalAmount,
@@ -132,17 +132,21 @@ router.put('/:id', (req, res) => {
       note: note || ''
     });
 
-    const updated = getDebitEntryById(entryId);
+    const updated = await getDebitEntryById(entryId);
     const affectedDates = Array.from(new Set([oldEntry.date, updated?.date].filter(Boolean)));
-    affectedDates.forEach(d => updateDailySummary(d));
+    for (const d of affectedDates) {
+      await updateDailySummary(d);
+    }
 
     const affectedCustomers = Array.from(new Set([oldEntry.customer_name, updated?.customer_name].filter(Boolean)));
-    affectedCustomers.forEach(c => rebuildCustomerLedger(c));
+    for (const c of affectedCustomers) {
+      await rebuildCustomerLedger(c);
+    }
 
     // Reconcile stock movements for this edited debit sale.
-    reconcileStockForSaleEntry('debit-sale', entryId, updated?.bags || []);
+    await reconcileStockForSaleEntry('debit-sale', entryId, updated?.bags || []);
 
-    logAudit({
+    await logAudit({
       action: 'update',
       entityType: 'debit-sale',
       entityId: String(entryId),
@@ -160,24 +164,24 @@ router.put('/:id', (req, res) => {
 });
 
 // ── Admin delete debit entry ────────────────────────────────
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     if (!requireAdmin(req, res)) return;
     const entryId = Number(req.params.id);
     if (!Number.isFinite(entryId) || entryId <= 0) return res.status(400).json({ error: 'Invalid id' });
 
-    const oldEntry = getDebitEntryById(entryId);
+    const oldEntry = await getDebitEntryById(entryId);
     if (!oldEntry) return res.status(404).json({ error: 'Entry not found' });
 
-    deleteDebitEntryById(entryId);
+    await deleteDebitEntryById(entryId);
 
-    updateDailySummary(oldEntry.date);
-    rebuildCustomerLedger(oldEntry.customer_name);
+    await updateDailySummary(oldEntry.date);
+    await rebuildCustomerLedger(oldEntry.customer_name);
 
     // Remove stock movements for this deleted debit sale.
-    deleteStockMovementsForSource('debit-sale', entryId);
+    await deleteStockMovementsForSource('debit-sale', entryId);
 
-    logAudit({
+    await logAudit({
       action: 'delete',
       entityType: 'debit-sale',
       entityId: String(entryId),

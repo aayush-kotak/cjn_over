@@ -18,7 +18,7 @@ function requireAdmin(req, res) {
   return true;
 }
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const { date, amount, category, note, description } = req.body;
     const finalDate     = date || new Date().toISOString().slice(0, 10);
@@ -26,13 +26,13 @@ router.post('/', (req, res) => {
     const finalCategory = category || description || note || 'Expense';
     if (finalAmount <= 0) return res.status(400).json({ error: 'Amount must be > 0' });
 
-    const info = insertExpense(finalDate, finalAmount, finalCategory, note || finalCategory);
+    const info = await insertExpense(finalDate, finalAmount, finalCategory, note || finalCategory);
     const entryId = info.lastInsertRowid;
 
     // Trigger reconciliation
-    updateDailySummary(finalDate);
+    await updateDailySummary(finalDate);
 
-    logAudit({
+    await logAudit({
       action: 'create',
       entityType: 'expenses',
       entityId: String(entryId),
@@ -49,23 +49,24 @@ router.post('/', (req, res) => {
   }
 });
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    res.json(getExpenses(req.query.date || null));
+    const entries = await getExpenses(req.query.date || null);
+    res.json(entries);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch' });
   }
 });
 
 // ── Admin edit expense entry ───────────────────────────────
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     if (!requireAdmin(req, res)) return;
 
     const entryId = Number(req.params.id);
     if (!Number.isFinite(entryId) || entryId <= 0) return res.status(400).json({ error: 'Invalid id' });
 
-    const oldEntry = getExpenseById(entryId);
+    const oldEntry = await getExpenseById(entryId);
     if (!oldEntry) return res.status(404).json({ error: 'Entry not found' });
 
     const { date, amount, category, note, description } = req.body;
@@ -75,18 +76,20 @@ router.put('/:id', (req, res) => {
 
     if (finalAmount <= 0) return res.status(400).json({ error: 'Amount must be > 0' });
 
-    updateExpenseById(entryId, {
+    await updateExpenseById(entryId, {
       date: finalDate,
       amount: finalAmount,
       category: finalCategory,
       note: note || oldEntry.note || finalCategory
     });
 
-    const updated = getExpenseById(entryId);
+    const updated = await getExpenseById(entryId);
     const affectedDates = Array.from(new Set([oldEntry.date, updated?.date].filter(Boolean)));
-    affectedDates.forEach(d => updateDailySummary(d));
+    for (const d of affectedDates) {
+      await updateDailySummary(d);
+    }
 
-    logAudit({
+    await logAudit({
       action: 'update',
       entityType: 'expenses',
       entityId: String(entryId),
@@ -104,20 +107,20 @@ router.put('/:id', (req, res) => {
 });
 
 // ── Admin delete expense entry ──────────────────────────────
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     if (!requireAdmin(req, res)) return;
 
     const entryId = Number(req.params.id);
     if (!Number.isFinite(entryId) || entryId <= 0) return res.status(400).json({ error: 'Invalid id' });
 
-    const oldEntry = getExpenseById(entryId);
+    const oldEntry = await getExpenseById(entryId);
     if (!oldEntry) return res.status(404).json({ error: 'Entry not found' });
 
-    deleteExpenseById(entryId);
-    updateDailySummary(oldEntry.date);
+    await deleteExpenseById(entryId);
+    await updateDailySummary(oldEntry.date);
 
-    logAudit({
+    await logAudit({
       action: 'delete',
       entityType: 'expenses',
       entityId: String(entryId),

@@ -19,7 +19,7 @@ function requireAdmin(req, res) {
   return true;
 }
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const { date, customer_name, customerName, amount, note } = req.body;
     const finalCustomer = (customer_name || customerName || '').trim();
@@ -28,14 +28,14 @@ router.post('/', (req, res) => {
     if (!finalCustomer) return res.status(400).json({ error: 'Customer name required' });
     if (finalAmount <= 0) return res.status(400).json({ error: 'Amount must be > 0' });
 
-    const info = insertCreditEntry(finalDate, finalCustomer, finalAmount, note || '');
+    const info = await insertCreditEntry(finalDate, finalCustomer, finalAmount, note || '');
     const entryId = info.lastInsertRowid;
 
     // Trigger reconciliation
-    updateDailySummary(finalDate);
-    rebuildCustomerLedger(finalCustomer);
+    await updateDailySummary(finalDate);
+    await rebuildCustomerLedger(finalCustomer);
 
-    logAudit({
+    await logAudit({
       action: 'create',
       entityType: 'credit',
       entityId: String(entryId),
@@ -52,23 +52,24 @@ router.post('/', (req, res) => {
   }
 });
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    res.json(getCreditEntries(req.query.date || null));
+    const entries = await getCreditEntries(req.query.date || null);
+    res.json(entries);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch' });
   }
 });
 
 // ── Admin edit credit entry ─────────────────────────────────
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     if (!requireAdmin(req, res)) return;
 
     const entryId = Number(req.params.id);
     if (!Number.isFinite(entryId) || entryId <= 0) return res.status(400).json({ error: 'Invalid id' });
 
-    const oldEntry = getCreditEntryById(entryId);
+    const oldEntry = await getCreditEntryById(entryId);
     if (!oldEntry) return res.status(404).json({ error: 'Entry not found' });
 
     const { date, customer_name, customerName, amount, note } = req.body;
@@ -79,21 +80,25 @@ router.put('/:id', (req, res) => {
     if (!finalCustomer) return res.status(400).json({ error: 'Customer name required' });
     if (finalAmount <= 0) return res.status(400).json({ error: 'Amount must be > 0' });
 
-    updateCreditEntryById(entryId, {
+    await updateCreditEntryById(entryId, {
       date: finalDate,
       customerName: finalCustomer,
       amount: finalAmount,
       note: note || ''
     });
 
-    const updated = getCreditEntryById(entryId);
+    const updated = await getCreditEntryById(entryId);
     const affectedDates = Array.from(new Set([oldEntry.date, updated?.date].filter(Boolean)));
-    affectedDates.forEach(d => updateDailySummary(d));
+    for (const d of affectedDates) {
+      await updateDailySummary(d);
+    }
 
     const affectedCustomers = Array.from(new Set([oldEntry.customer_name, updated?.customer_name].filter(Boolean)));
-    affectedCustomers.forEach(c => rebuildCustomerLedger(c));
+    for (const c of affectedCustomers) {
+      await rebuildCustomerLedger(c);
+    }
 
-    logAudit({
+    await logAudit({
       action: 'update',
       entityType: 'credit',
       entityId: String(entryId),
@@ -111,22 +116,22 @@ router.put('/:id', (req, res) => {
 });
 
 // ── Admin delete credit entry ───────────────────────────────
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     if (!requireAdmin(req, res)) return;
 
     const entryId = Number(req.params.id);
     if (!Number.isFinite(entryId) || entryId <= 0) return res.status(400).json({ error: 'Invalid id' });
 
-    const oldEntry = getCreditEntryById(entryId);
+    const oldEntry = await getCreditEntryById(entryId);
     if (!oldEntry) return res.status(404).json({ error: 'Entry not found' });
 
-    deleteCreditEntryById(entryId);
+    await deleteCreditEntryById(entryId);
 
-    updateDailySummary(oldEntry.date);
-    rebuildCustomerLedger(oldEntry.customer_name);
+    await updateDailySummary(oldEntry.date);
+    await rebuildCustomerLedger(oldEntry.customer_name);
 
-    logAudit({
+    await logAudit({
       action: 'delete',
       entityType: 'credit',
       entityId: String(entryId),

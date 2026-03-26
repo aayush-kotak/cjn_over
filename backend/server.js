@@ -72,9 +72,25 @@ const frontendPath = path.join(__dirname, '../frontend/dist');
 app.use(express.static(frontendPath));
 app.get('*', (req, res) => res.sendFile(path.join(frontendPath, 'index.html')));
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log('\n🐄 CJN PVT LTD SERVER');
-  console.log('➜  http://localhost:' + PORT);
-  console.log('➜  Health: http://localhost:' + PORT + '/api/health');
-  console.log('➜  Auth: ENABLED 🔒\n');
-});
+const { initDatabase } = require('./db/database');
+
+// Initialize database and start server
+async function startServer() {
+  try {
+    console.log('⏳ Initializing Turso Database...');
+    await initDatabase();
+    console.log('✅ Database Ready');
+
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log('\n🐄 CJN PVT LTD SERVER');
+      console.log('➜  http://localhost:' + PORT);
+      console.log('➜  Health: http://localhost:' + PORT + '/api/health');
+      console.log('➜  Auth: ENABLED 🔒\n');
+    });
+  } catch (err) {
+    console.error('❌ Failed to start server:', err.message);
+    process.exit(1);
+  }
+}
+
+startServer();

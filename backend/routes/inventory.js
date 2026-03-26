@@ -17,18 +17,19 @@ function requireAdmin(req, res) {
 }
 
 // Low-stock alert list
-router.get('/low-stock', (req, res) => {
+router.get('/low-stock', async (req, res) => {
   try {
-    res.json(listLowStockProducts());
+    const lowStock = await listLowStockProducts();
+    res.json(lowStock);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // Current stock for one product
-router.get('/stock/:productId', (req, res) => {
+router.get('/stock/:productId', async (req, res) => {
   try {
-    const stock = getStockForProduct(req.params.productId);
+    const stock = await getStockForProduct(req.params.productId);
     res.json({ productId: req.params.productId, stock });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -36,7 +37,7 @@ router.get('/stock/:productId', (req, res) => {
 });
 
 // Manual stock in/out
-router.post('/movement', (req, res) => {
+router.post('/movement', async (req, res) => {
   try {
     if (!requireAdmin(req, res)) return;
 
@@ -47,14 +48,14 @@ router.post('/movement', (req, res) => {
       note
     } = req.body || {};
 
-    addStockMovement({
+    await addStockMovement({
       productId,
       movementType,
       quantityBags,
       note
     });
 
-    logAudit({
+    await logAudit({
       action: 'create',
       entityType: 'stock-movement',
       entityId: null,
@@ -71,4 +72,3 @@ router.post('/movement', (req, res) => {
 });
 
 module.exports = router;
-

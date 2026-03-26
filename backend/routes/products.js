@@ -16,24 +16,26 @@ function requireAdmin(req, res) {
   return true;
 }
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    res.json(getAllProducts());
+    const products = await getAllProducts();
+    res.json(products);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // Returns all products with current stock levels
-router.get('/with-stock', (req, res) => {
+router.get('/with-stock', async (req, res) => {
   try {
-    res.json(getAllProductsWithStock());
+    const productsWithStock = await getAllProductsWithStock();
+    res.json(productsWithStock);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     if (!requireAdmin(req, res)) return;
 
@@ -47,7 +49,7 @@ router.post('/', (req, res) => {
       lowStockThreshold
     } = req.body || {};
 
-    const product = createProduct({
+    const product = await createProduct({
       name,
       ratePerBag: ratePerBag ?? rate_per_bag,
       size,
@@ -55,7 +57,7 @@ router.post('/', (req, res) => {
       lowStockThreshold: lowStockThreshold ?? low_stock_threshold
     });
 
-    logAudit({
+    await logAudit({
       action: 'create',
       entityType: 'products',
       entityId: String(product.id),
