@@ -9,7 +9,8 @@ const {
   updateDailySummary,
   logAudit,
   reconcileStockForSaleEntry,
-  deleteStockMovementsForSource
+  deleteStockMovementsForSource,
+  validateStockForBags
 } = require('../db/database');
 
 function calcAmountFromBags(bags) {
@@ -52,6 +53,19 @@ router.post('/', (req, res) => {
     const finalBags = normalized.normalized;
     const computedAmount = calcAmountFromBags(finalBags);
     if (computedAmount <= 0) return res.status(400).json({ error: 'Amount must be > 0' });
+
+    // ── Stock validation ──────────────────────────────────────
+    const stockCheck = validateStockForBags(finalBags);
+    if (!stockCheck.valid) {
+      const msgs = stockCheck.errors.map(e =>
+        `"${e.bagName}" — need ${e.required} bags but only ${e.available} available`
+      );
+      return res.status(400).json({
+        error: 'Stock not available! Please order first.',
+        stockErrors: stockCheck.errors,
+        details: msgs
+      });
+    }
 
     const info = insertCashEntry(finalDate, finalCustomer, computedAmount, finalBags, note || '');
     const entryId = info.lastInsertRowid;

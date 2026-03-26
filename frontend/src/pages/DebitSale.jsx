@@ -4,8 +4,9 @@ import CustomerDropdown from '../components/CustomerDropdown';
 import ConfirmModal from '../components/ConfirmModal';
 import { showToast } from '../components/Toast';
 import { apiFetch } from '../utils/api';
+import { BAG_CATALOG } from '../utils/bagCatalog';
 
-const emptyBag = () => ({ productId: '', bagName: '', numberOfBags: '', pricePerBag: '' });
+const emptyBag = () => ({ bagName: '', numberOfBags: '', pricePerBag: '' });
 
 export default function DebitSale() {
   const navigate = useNavigate();
@@ -13,15 +14,28 @@ export default function DebitSale() {
   const [bags, setBags]                 = useState([emptyBag()]);
   const [showModal, setShowModal]       = useState(false);
   const [loading, setLoading]           = useState(false);
-  const [products, setProducts]        = useState([]);
+  const [stockMap, setStockMap]         = useState({});
 
   const todayDisplay = new Date().toLocaleDateString('en-IN', { day:'2-digit', month:'2-digit', year:'numeric' });
   const todayISO     = new Date().toISOString().slice(0, 10);
 
+  // Fetch stock levels for all products
+  useEffect(() => {
+    apiFetch('/api/products/with-stock')
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          const map = {};
+          data.forEach(p => { map[p.name] = p.currentStock ?? 0; });
+          setStockMap(map);
+        }
+      })
+      .catch(() => setStockMap({}));
+  }, []);
+
   const updateBag = (index, field, value) => {
     const updated = [...bags];
     updated[index] = { ...updated[index], [field]: value };
-    if (field === 'bagName') updated[index].productId = '';
     setBags(updated);
   };
 
@@ -32,30 +46,15 @@ export default function DebitSale() {
   const grandTotal  = bags.reduce((sum, bag) => sum + getSubtotal(bag), 0);
   const isValid     = customerName.trim() && bags.every(b => b.bagName.trim() && Number(b.numberOfBags) > 0 && Number(b.pricePerBag) > 0);
 
-  useEffect(() => {
-    let cancelled = false;
-    apiFetch('/api/products')
-      .then(res => res.json())
-      .then(data => {
-        if (cancelled) return;
-        if (Array.isArray(data)) setProducts(data);
-      })
-      .catch(() => {
-        if (!cancelled) setProducts([]);
-      });
-    return () => { cancelled = true; };
-  }, []);
-
-  const handlePickProduct = (index, productId) => {
-    const pid = String(productId || '');
-    const product = products.find(p => String(p.id) === pid);
-    if (!product) {
-      updateBag(index, 'productId', '');
-      return;
-    }
-    updateBag(index, 'productId', pid);
-    updateBag(index, 'bagName', product.name);
-    updateBag(index, 'pricePerBag', product.rate_per_bag ?? '');
+  // Check if a bag has insufficient stock
+  const getStockStatus = (bag) => {
+    const name = (bag.bagName || '').trim();
+    if (!name) return null;
+    const available = stockMap[name] ?? 0;
+    const requested = Number(bag.numberOfBags) || 0;
+    if (available <= 0) return { type: 'out', available, msg: 'OUT OF STOCK' };
+    if (requested > available) return { type: 'low', available, msg: `Only ${available} bags available` };
+    return { type: 'ok', available, msg: `${available} in stock` };
   };
 
   const handlePreview = () => {
@@ -66,7 +65,6 @@ export default function DebitSale() {
   const handleSave = async () => {
     setLoading(true);
     try {
-      // ── Save to database with auth token ──────────────────
       const res = await apiFetch('/api/debit-sale', {
         method: 'POST',
         body: JSON.stringify({
@@ -79,9 +77,16 @@ export default function DebitSale() {
         })
       });
 
+      const data = await res?.json();
+
       if (!res || !res.ok) {
-        const data = await res?.json();
-        throw new Error(data?.error || 'Failed');
+        if (data?.details && Array.isArray(data.details)) {
+          const errorMsg = '🚫 ' + data.error + '\n\n' + data.details.join('\n');
+          showToast(errorMsg, 'error');
+        } else {
+          showToast(data?.error || 'Failed to save', 'error');
+        }
+        return;
       }
 
       showToast('Debit Sale saved successfully!');
@@ -119,7 +124,9 @@ export default function DebitSale() {
 
       {/* Bag entries */}
       <div className="space-y-4 mb-6">
-        {bags.map((bag, index) => (
+        {bags.map((bag, index) => {
+          const status = getStockStatus(bag);
+          return (
           <div key={index} className="bg-white rounded-2xl shadow-md border border-border p-5 hover:shadow-lg transition-shadow">
             <div className="flex items-center justify-between mb-4">
               <span className="text-sm font-bold text-primary-dark bg-primary/10 px-3 py-1 rounded-full">Bag #{index + 1}</span>
@@ -129,28 +136,39 @@ export default function DebitSale() {
             </div>
             <div className="grid sm:grid-cols-3 gap-4">
               <div>
-                <label className="block text-sm font-semibold text-primary-dark mb-1.5">Product (optional)</label>
+                <label className="block text-sm font-semibold text-primary-dark mb-1.5">
+                  Bag Name <span className="text-danger">*</span>
+                </label>
                 <select
-                  value={bag.productId || ''}
-                  onChange={e => handlePickProduct(index, e.target.value)}
+                  value={bag.bagName}
+                  onChange={e => updateBag(index, 'bagName', e.target.value)}
                   className="w-full px-4 py-3 rounded-xl border-2 border-border bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all text-sm font-medium"
                 >
-                  <option value="">Custom (type bag name)</option>
-                  {products.map(p => (
-                    <option key={p.id} value={String(p.id)}>{p.name}</option>
+                  <option value="">-- Select Bag --</option>
+                  {Object.entries(BAG_CATALOG).map(([category, items]) => (
+                    <optgroup key={category} label={`━━ ${category} ━━`}>
+                      {items.map(name => {
+                        const stock = stockMap[name] ?? 0;
+                        return (
+                          <option key={name} value={name} disabled={stock <= 0}>
+                            {name} — {stock > 0 ? `${stock} bags` : '❌ OUT OF STOCK'}
+                          </option>
+                        );
+                      })}
+                    </optgroup>
                   ))}
                 </select>
 
-                <label className="block text-sm font-semibold text-primary-dark mt-3 mb-1.5">
-                  Bag Name <span className="text-danger">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={bag.bagName}
-                  onChange={e => updateBag(index, 'bagName', e.target.value)}
-                  placeholder="Enter bag name"
-                  className="w-full px-4 py-3 rounded-xl border-2 border-border bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all text-sm font-medium"
-                />
+                {/* Stock status indicator */}
+                {status && (
+                  <div className={`mt-2 text-xs font-bold px-3 py-1.5 rounded-lg inline-block ${
+                    status.type === 'out' ? 'bg-red-100 text-red-700' :
+                    status.type === 'low' ? 'bg-amber-100 text-amber-700' :
+                    'bg-green-100 text-green-700'
+                  }`}>
+                    {status.type === 'out' ? '🚫' : status.type === 'low' ? '⚠️' : '✅'} {status.msg}
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-semibold text-primary-dark mb-1.5">No. of Bags <span className="text-danger">*</span></label>
@@ -169,7 +187,8 @@ export default function DebitSale() {
               </span>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Add bag */}

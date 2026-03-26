@@ -1,13 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { apiFetch } from '../utils/api';
 import { showToast } from './Toast';
 import CustomerDropdown from './CustomerDropdown';
+import { BAG_CATALOG } from '../utils/bagCatalog';
 
-const emptyBag = () => ({ productId: '', bagName: '', numberOfBags: '', pricePerBag: '' });
+const emptyBag = () => ({ bagName: '', numberOfBags: '', pricePerBag: '' });
 
 export default function EditTransactionModal({ type, entry, onSave, onCancel }) {
   const [loading, setLoading]     = useState(false);
-  const [products, setProducts]   = useState([]);
   
   // Form State
   const [date, setDate]           = useState(entry?.date || '');
@@ -17,19 +17,9 @@ export default function EditTransactionModal({ type, entry, onSave, onCancel }) 
   const [bags, setBags]           = useState(Array.isArray(entry?.bags) ? JSON.parse(JSON.stringify(entry.bags)) : []);
   const [category, setCategory]   = useState(entry?.category || '');
 
-  useEffect(() => {
-    if (type === 'cash-sale' || type === 'debit-sale') {
-      apiFetch('/api/products')
-        .then(res => res.json())
-        .then(data => { if (Array.isArray(data)) setProducts(data); })
-        .catch(() => setProducts([]));
-    }
-  }, [type]);
-
   const updateBag = (index, field, value) => {
     const updated = [...bags];
     updated[index] = { ...updated[index], [field]: value };
-    if (field === 'bagName') updated[index].productId = '';
     setBags(updated);
   };
 
@@ -38,18 +28,6 @@ export default function EditTransactionModal({ type, entry, onSave, onCancel }) 
 
   const getSubtotal = (bag) => (Number(bag.numberOfBags) || 0) * (Number(bag.pricePerBag) || 0);
   const grandTotal  = bags.reduce((sum, bag) => sum + getSubtotal(bag), 0);
-
-  const handlePickProduct = (index, productId) => {
-    const pid = String(productId || '');
-    const product = products.find(p => String(p.id) === pid);
-    if (!product) {
-      updateBag(index, 'productId', '');
-      return;
-    }
-    updateBag(index, 'productId', pid);
-    updateBag(index, 'bagName', product.name);
-    updateBag(index, 'pricePerBag', product.rate_per_bag ?? '');
-  };
 
   const handleSave = async () => {
     setLoading(true);
@@ -137,17 +115,16 @@ export default function EditTransactionModal({ type, entry, onSave, onCancel }) 
                 <div key={idx} className="p-4 bg-bg rounded-2xl border border-border relative group">
                   <div className="grid sm:grid-cols-3 gap-3">
                     <div className="sm:col-span-1">
-                      <label className="block text-[10px] font-black text-text-secondary uppercase mb-1">Product</label>
-                      <select value={bag.productId || ''} onChange={e => handlePickProduct(idx, e.target.value)}
+                      <label className="block text-[10px] font-black text-text-secondary uppercase mb-1">Bag Name</label>
+                      <select value={bag.bagName || ''} onChange={e => updateBag(idx, 'bagName', e.target.value)}
                         className="w-full px-3 py-2 rounded-lg border border-border text-xs font-bold bg-white outline-none focus:border-primary">
-                        <option value="">Custom Name</option>
-                        {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        <option value="">-- Select Bag --</option>
+                        {Object.entries(BAG_CATALOG).map(([cat, items]) => (
+                          <optgroup key={cat} label={`━━ ${cat} ━━`}>
+                            {items.map(name => <option key={name} value={name}>{name}</option>)}
+                          </optgroup>
+                        ))}
                       </select>
-                    </div>
-                    <div className="sm:col-span-2">
-                       <label className="block text-[10px] font-black text-text-secondary uppercase mb-1">Item Name</label>
-                       <input type="text" value={bag.bagName} onChange={e => updateBag(idx, 'bagName', e.target.value)}
-                        className="w-full px-3 py-2 rounded-lg border border-border text-xs font-bold bg-white outline-none focus:border-primary" />
                     </div>
                     <div>
                       <label className="block text-[10px] font-black text-text-secondary uppercase mb-1">Quantity</label>

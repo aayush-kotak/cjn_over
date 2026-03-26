@@ -54,6 +54,7 @@ const summaryRoutes = require('./routes/summary');
 const customersRoutes = require('./routes/customers');
 const productsRoutes = require('./routes/products');
 const inventoryRoutes = require('./routes/inventory');
+const stockManagementRoutes = require('./routes/stockManagement');
 
 app.use('/api/cash-sale', cashSaleRoutes);
 app.use('/api/credit', creditRoutes);
@@ -63,6 +64,7 @@ app.use('/api/summary', summaryRoutes);
 app.use('/api/customers', customersRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/inventory', inventoryRoutes);
+app.use('/api/stock-management', stockManagementRoutes);
 
 // ── Serve frontend ────────────────────────────────────────────
 const frontendPath = path.join(__dirname, '../frontend/dist');

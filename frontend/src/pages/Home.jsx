@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 
-export default function Home() {
+export default function Home({ user }) {
   const features = [
     { path: '/cash-sale', icon: '💰', title: 'Cash Sale', desc: 'Record cash sales of cattle feed bags', gradient: 'from-emerald-600 to-green-500' },
     { path: '/credit-received', icon: '📥', title: 'Credit Received', desc: 'Track credit payments from customers', gradient: 'from-amber-600 to-yellow-500' },
@@ -8,6 +8,11 @@ export default function Home() {
     { path: '/today-summary', icon: '📊', title: "Today's Summary", desc: 'View complete daily dashboard & analytics', gradient: 'from-indigo-600 to-blue-500' },
     { path: '/all-records', icon: '📁', title: 'All Records', desc: 'Customer ledger with full debit/credit history', gradient: 'from-purple-600 to-pink-500' },
   ];
+
+  // Add Stock Management for admin only
+  if (user?.role === 'admin') {
+    features.push({ path: '/stock-management', icon: '📦', title: 'Manage Stocks', desc: 'Khol, Bhuso & Tiwana stock management (Admin)', gradient: 'from-orange-600 to-red-500' });
+  }
 
   return (
     <div className="min-h-[calc(100vh-4rem)]">

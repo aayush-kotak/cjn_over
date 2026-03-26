@@ -984,6 +984,52 @@ function getAllProducts() {
   return db.prepare('SELECT * FROM products ORDER BY name ASC').all();
 }
 
+function getStockByProductName(name) {
+  const product = getProductByName((name || '').trim());
+  if (!product) return 0;
+  return getStockForProduct(product.id);
+}
+
+function getAllProductsWithStock() {
+  const products = getAllProducts();
+  return products.map(p => ({
+    ...p,
+    currentStock: getStockForProduct(p.id)
+  }));
+}
+
+/**
+ * Validate stock availability for an array of bag lines.
+ * Returns { valid: true } or { valid: false, errors: [...] }
+ */
+function validateStockForBags(bags) {
+  if (!Array.isArray(bags) || bags.length === 0) return { valid: true };
+
+  const errors = [];
+  // Aggregate quantities by bag name (in case same bag appears multiple times)
+  const qtyByName = {};
+  bags.forEach(b => {
+    const name = (b?.bagName || '').trim();
+    const qty = Number(b?.numberOfBags) || 0;
+    if (!name || qty <= 0) return;
+    qtyByName[name] = (qtyByName[name] || 0) + qty;
+  });
+
+  for (const [name, requiredQty] of Object.entries(qtyByName)) {
+    const availableStock = getStockByProductName(name);
+    if (availableStock < requiredQty) {
+      errors.push({
+        bagName: name,
+        required: requiredQty,
+        available: availableStock
+      });
+    }
+  }
+
+  if (errors.length > 0) return { valid: false, errors };
+  return { valid: true };
+}
+
 function listLowStockProducts() {
   return db.prepare(`
     SELECT p.*,
@@ -1024,6 +1070,21 @@ function addStockMovement({ productId, movementType, quantityBags, note, sourceE
   return true;
 }
 
+function getStockMovements({ date, productId } = {}) {
+  let sql = `SELECT * FROM stock_movements WHERE 1=1`;
+  const params = [];
+  if (date) {
+    sql += ` AND DATE(created_at) = ?`;
+    params.push(date);
+  }
+  if (productId) {
+    sql += ` AND product_id = ?`;
+    params.push(Number(productId));
+  }
+  sql += ` ORDER BY created_at DESC LIMIT 500`;
+  return db.prepare(sql).all(...params);
+}
+
 // ── One-time backfill for existing data ─────────────────────────────
 // If stock_movements is empty, rebuild it from existing cash+debit entries
 // so the inventory view starts accurate after upgrade.
@@ -1060,11 +1121,15 @@ module.exports = {
   // Products + stock
   createProduct,
   getAllProducts,
+  getAllProductsWithStock,
+  getStockByProductName,
+  validateStockForBags,
   listLowStockProducts,
   getStockForProduct,
   reconcileStockForSaleEntry,
   deleteStockMovementsForSource,
   addStockMovement,
+  getStockMovements,
   insertCashEntry,
   insertDebitEntry,
   insertCreditEntry,

@@ -3,6 +3,7 @@ const router = express.Router();
 
 const {
   getAllProducts,
+  getAllProductsWithStock,
   createProduct,
   logAudit
 } = require('../db/database');
@@ -18,6 +19,15 @@ function requireAdmin(req, res) {
 router.get('/', (req, res) => {
   try {
     res.json(getAllProducts());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Returns all products with current stock levels
+router.get('/with-stock', (req, res) => {
+  try {
+    res.json(getAllProductsWithStock());
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -62,4 +72,3 @@ router.post('/', (req, res) => {
 });
 
 module.exports = router;
-

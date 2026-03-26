@@ -45,6 +45,7 @@ import CreditReceived from './pages/CreditReceived';
 import DebitSale     from './pages/DebitSale';
 import TodaySummary  from './pages/TodaySummary';
 import AllRecords    from './pages/AllRecords';
+import StockManagement from './pages/StockManagement';
 
 function App() {
   const [user, setUser]         = useState(null);
@@ -154,12 +155,15 @@ function App() {
         <Toast />
         <main>
           <Routes>
-            <Route path="/"                element={<Home />} />
+            <Route path="/"                element={<Home user={user} />} />
             <Route path="/cash-sale"       element={<CashSale />} />
             <Route path="/credit-received" element={<CreditReceived />} />
             <Route path="/debit-sale"      element={<DebitSale />} />
             <Route path="/today-summary"   element={<TodaySummary />} />
             <Route path="/all-records"     element={<AllRecords />} />
+            {user?.role === 'admin' && (
+              <Route path="/stock-management" element={<StockManagement />} />
+            )}
           </Routes>
         </main>
       </div>

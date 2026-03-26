@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
-const navItems = [
+const baseNavItems = [
   { path: '/cash-sale',     label: 'Cash Sale',       icon: '💰' },
   { path: '/credit-received', label: 'Credit Received', icon: '📥' },
   { path: '/debit-sale',    label: 'Debit Sale',      icon: '📤' },
@@ -13,6 +13,15 @@ export default function Navbar({ user, onLogout }) {
   const location    = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+
+  // Build nav items — add Stock Management only for admin
+  const navItems = useMemo(() => {
+    const items = [...baseNavItems];
+    if (user?.role === 'admin') {
+      items.push({ path: '/stock-management', label: 'Manage Stocks', icon: '📦' });
+    }
+    return items;
+  }, [user?.role]);
 
   const handleLogoutClick = () => setShowLogoutConfirm(true);
   const handleLogoutConfirm = () => { setShowLogoutConfirm(false); onLogout(); };
